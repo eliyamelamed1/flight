@@ -1,0 +1,9 @@
+# Local Claude Code agent config / skill library — not part of this toolkit
+.claude/
+
+# Rendered build artifact (ADR-0008) — generated per build, never committed
+config.json
+
+# OS / editor noise
+Thumbs.db
+.DS_Store

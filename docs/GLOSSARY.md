@@ -11,11 +11,13 @@
   mechanism (ADR-0012); replaces overlay injection. Stored outside the synced branches.
 - **`internal-overlay`** — (Superseded, ADR-0012) Branch that used to hold internal-only files
   in the overlay model.
-- **`pre-dev`** — Internal branch rebuilt every sync = external `master` with the dictionary
-  transform applied. (ADR-0011 structure; ADR-0012 content.)
-- **`master`** — Internal production/deploy branch; reset to `pre-dev` every sync.
-- **`upstream-base` / `pre-main` / `main`** — Older branch names from the superseded
-  2-branch model (ADR-0003). See `pre-dev`/`master` above.
+- **`pre-dev`** — Internal branch forward-advanced every sync = external `main` with the
+  dictionary transform applied. (ADR-0011 structure; ADR-0012/0013 content.)
+- **`main`** — Internal production/deploy branch — the top of the promotion pipeline
+  (`pre-dev → develop → staging → main`; renamed from `master`, ADR-0015). Reached by promotion,
+  not by the sync (ADR-0013).
+- **`upstream-base` / `pre-main`** — Older branch names from the superseded 2-branch model
+  (ADR-0003). See `pre-dev`/`main` above for the current model.
 - **git bundle** — A single file packaging git objects/refs, used to move commits across
   the air gap without a network remote.
 - **Additive-only** — Policy that the internal repo only *adds* files that don't exist

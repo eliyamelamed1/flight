@@ -1,26 +1,26 @@
 <#
 .SYNOPSIS
-    INTERNAL side (air-gapped). Bring external master into internal `pre-dev` ONLY, applying
+    INTERNAL side (air-gapped). Bring external main into internal `pre-dev` ONLY, applying
     the dictionary transform. Forward-advancing: adds ONE commit to pre-dev each sync.
-    Does NOT touch develop/staging/master (ADR-0013).
+    Does NOT touch develop/staging/main (ADR-0013).
 
 .DESCRIPTION
-    Your promotion pipeline is:  pre-dev -> develop -> staging -> master.
+    Your promotion pipeline is:  pre-dev -> develop -> staging -> main.
     This script only feeds the bottom of that pipeline. It never rewrites pre-dev's history
     (so merges up the pipeline stay clean) and never touches the promotion branches.
 
     Each sync:
       1. verify bundle
       2. fetch all refs into refs/upstream/* (mirror; --prune)
-      3. switch to pre-dev (create it from external master on first run)
-      4. set pre-dev's tree to external master's content (read-tree; keeps pre-dev HEAD)
+      3. switch to pre-dev (create it from external main on first run)
+      4. set pre-dev's tree to external main's content (read-tree; keeps pre-dev HEAD)
       5. apply dictionary transform (text files only; skip binaries; UTF-8 no BOM)
       6. commit -> one new forward commit on pre-dev (skip if nothing changed)
 
     Then promote pre-dev up the pipeline with your normal process (PRs/CI gates).
 
     Self-healing: an accidental commit to pre-dev is content-overwritten next sync (external
-    is re-applied), with no conflict. Accidental commits to develop/staging/master are NOT
+    is re-applied), with no conflict. Accidental commits to develop/staging/main are NOT
     handled here - protect those with branch protection on your internal server.
 
 .EXAMPLE
@@ -33,7 +33,7 @@ param(
     [Parameter(Mandatory)][string]$Bundle,
     [Parameter(Mandatory)][string]$Dictionary,
     [string]$PreDevBranch    = 'pre-dev',
-    [string]$UpstreamMainRef = 'refs/upstream/heads/master',
+    [string]$UpstreamMainRef = 'refs/upstream/heads/main',
     [switch]$Strict
 )
 
@@ -74,19 +74,19 @@ Invoke-Git fetch --prune $Bundle `
     '+refs/tags/*:refs/upstream/tags/*' | Out-Null
 
 if ((Try-Git rev-parse --verify --quiet $UpstreamMainRef) -ne 0) {
-    throw "Bundle has no $UpstreamMainRef - is the external default branch really 'master'? Adjust -UpstreamMainRef."
+    throw "Bundle has no $UpstreamMainRef - is the external default branch really 'main'? Adjust -UpstreamMainRef."
 }
 
 Write-Host "[3/6] Switching to $PreDevBranch (forward-advancing; NOT rewriting history)..."
 if ((Try-Git rev-parse --verify --quiet "refs/heads/$PreDevBranch") -eq 0) {
     Invoke-Git switch $PreDevBranch | Out-Null
 } else {
-    Write-Host "      $PreDevBranch does not exist - creating it from external master."
+    Write-Host "      $PreDevBranch does not exist - creating it from external main."
     Invoke-Git switch -c $PreDevBranch $UpstreamMainRef | Out-Null
 }
 
-Write-Host "[4/6] Setting pre-dev tree to external master's content..."
-# Updates index + working tree to external master, but leaves HEAD on pre-dev,
+Write-Host "[4/6] Setting pre-dev tree to external main's content..."
+# Updates index + working tree to external main, but leaves HEAD on pre-dev,
 # so the next commit is a normal forward commit (parent = current pre-dev tip).
 Invoke-Git read-tree -u --reset $UpstreamMainRef | Out-Null
 
@@ -119,13 +119,13 @@ foreach ($p in $pairs) {
 Write-Host "[6/6] Committing forward commit on $PreDevBranch..."
 Invoke-Git add -A | Out-Null
 if (Invoke-Git status --porcelain) {
-    Invoke-Git commit -m "sync: external master + dictionary transform" | Out-Null
+    Invoke-Git commit -m "sync: external main + dictionary transform" | Out-Null
     Write-Host "      committed."
 } else {
     Write-Host "      no changes since last sync - nothing to commit."
 }
 
 Write-Host ""
-Write-Host "Upstream master : $((Invoke-Git rev-parse --short $UpstreamMainRef).Trim())"
+Write-Host "Upstream main : $((Invoke-Git rev-parse --short $UpstreamMainRef).Trim())"
 Write-Host "$PreDevBranch   : $((Invoke-Git rev-parse --short $PreDevBranch).Trim())"
-Write-Host "Next: promote $PreDevBranch -> develop -> staging -> master via your normal process."
+Write-Host "Next: promote $PreDevBranch -> develop -> staging -> main via your normal process."

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     One-time INTERNAL setup. Clone the first bundle, run the first sync (creates `pre-dev`),
-    and create the promotion branches develop/staging/master from it.
+    and create the promotion branches develop/staging/main from it (main is the deploy branch).
 
 .EXAMPLE
     .\bootstrap-internal.ps1 -RepoPath C:\src\app-internal -Bundle D:\transfer\app.bundle `
@@ -36,17 +36,17 @@ Write-Host "[2/3] First sync (creates pre-dev)..."
 & (Join-Path $here 'sync-from-bundle.ps1') -RepoPath $RepoPath -Bundle $Bundle -Dictionary $Dictionary
 
 Write-Host "[3/3] Creating promotion branches from pre-dev..."
-# The clone created a raw (untransformed) 'master'; force all promotion branches to pre-dev
+# The clone created a raw (untransformed) 'main'; force all promotion branches to pre-dev
 # so they start from the transformed content. (pre-dev is HEAD after the sync, so -f is safe.)
-foreach ($b in @('develop','staging','master')) {
+foreach ($b in @('develop','staging','main')) {
     Invoke-Git -C $RepoPath branch -f $b pre-dev | Out-Null
     Write-Host "      set $b -> pre-dev"
 }
 Invoke-Git -C $RepoPath switch pre-dev | Out-Null
 
 Write-Host ""
-Write-Host "Bootstrap complete. Branches: pre-dev, develop, staging, master."
+Write-Host "Bootstrap complete. Branches: pre-dev, develop, staging, main (deploy)."
 Write-Host "NEXT STEPS (on your internal git server / clones):"
-Write-Host "  1. Enable BRANCH PROTECTION on develop, staging, master (reject direct/force pushes)."
+Write-Host "  1. Enable BRANCH PROTECTION on develop, staging, main (reject direct/force pushes)."
 Write-Host "  2. Keep the scripts + dictionary OUTSIDE the repo (e.g. C:\tools\airgap\)."
 Write-Host "  3. For the rendered config.json build artifact: add 'config.json' to .git/info/exclude."

@@ -416,3 +416,32 @@ external's exact text (source of truth); the internal quick-fix bytes are discar
 - Reconcile rewrites `master` → force-push required; do it as a controlled action, then
   everyone re-syncs their clones.
 - Preferred to avoid all this: ADR-0004 (hotfix on a throwaway branch, never on `master`).
+
+---
+
+## ADR-0015 — Internal deploy branch renamed `master` -> `main`; external default is also `main`
+
+**Status:** Accepted. Renames the deploy branch of ADR-0011/0013 (`master`) to `main`. Retains the
+promotion model (ADR-0013): the sync forward-advances `pre-dev` only.
+
+**Context:** Both the external source repo and the internal repo use `main` as their default/deploy
+branch (GitHub's default). The scripts and docs previously named the internal deploy branch
+`master`, which no longer matched reality and left a stray `master` branch on every bootstrap.
+
+**Decision:**
+- The internal promotion pipeline is now `pre-dev -> develop -> staging -> main`. `main` is the
+  deploy branch (formerly `master`); `master` is removed.
+- The sync still touches **`pre-dev` only** (ADR-0013 unchanged); promotion to `develop`/`staging`/
+  `main` is the team's manual PR/CI process.
+- `sync-from-bundle.ps1` `-UpstreamMainRef` now defaults to `refs/upstream/heads/main` (the external
+  default is `main`, not `master`).
+- `bootstrap-internal.ps1` creates `develop`/`staging` and forces `main` to the transformed
+  `pre-dev` (the raw `main` left by `git clone <bundle>` is overwritten with transformed content).
+- `reconcile-master.ps1` -> `reconcile-main.ps1`; it reconciles `main` (not `master`), backing up to
+  a `backup/main-before-reconcile-*` tag.
+
+**Operating rule:** on the internal remote, only `pre-dev` is pushed by the sync; `develop`/
+`staging`/`main` move only via promotion and are protected by branch protection.
+
+**Alternatives considered:** keep `master` as the internal deploy branch while the external is
+`main` — rejected; the two-name split was a persistent source of confusion and left stray branches.

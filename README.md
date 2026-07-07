@@ -5,10 +5,10 @@ air-gapped **internal** repo — with internal-specific content applied via a fi
 dictionary — and feed it into an internal promotion pipeline.
 
 ```
-external master --(git bundle across the air gap)--> internal
+external main --(git bundle across the air gap)--> internal
    |                                                    |
    |  export-bundle.ps1        sync-from-bundle.ps1     v
-   +--------------------------> pre-dev --> develop --> staging --> master
+   +--------------------------> pre-dev --> develop --> staging --> main
                                 (external + dictionary transform)   (your promotion pipeline)
 ```
 
@@ -20,9 +20,9 @@ external master --(git bundle across the air gap)--> internal
   out-of-order bundle is harmless).
 - The bundle is imported into an isolated `refs/upstream/*` namespace (mirrors all
   branches + tags; no collisions).
-- `pre-dev` is **forward-advanced** one commit per sync: external `master` content with a
+- `pre-dev` is **forward-advanced** one commit per sync: external `main` content with a
   **dictionary transform** applied (e.g. `eliya`→`dori`) to produce internal-specific text.
-- You promote `pre-dev → develop → staging → master` with your normal PR/CI gates.
+- You promote `pre-dev → develop → staging → main` with your normal PR/CI gates.
 
 ## Scripts (`scripts/`, run from OUTSIDE the synced repo)
 
@@ -31,7 +31,7 @@ external master --(git bundle across the air gap)--> internal
 | `export-bundle.ps1` | external | Create a full bundle of all refs |
 | `bootstrap-internal.ps1` | internal | One-time: clone + first sync + create pipeline branches |
 | `sync-from-bundle.ps1` | internal | Each update: forward-advance `pre-dev` (external + transform) |
-| `reconcile-master.ps1` | internal | After a hotfix on `master`: realign it to `staging` |
+| `reconcile-main.ps1` | internal | After a hotfix on `main`: realign it to `staging` |
 | `render-config.ps1` | build | Render `config.json` from template + values (never committed) |
 | `dictionary.tsv` | — | `from`⇥`to` transform pairs |
 
@@ -43,12 +43,12 @@ external master --(git bundle across the air gap)--> internal
 
 ## Key operating rules
 
-- Never hand-edit `pre-dev`/`master`. App changes go **upstream**; internal content diffs go
+- Never hand-edit `pre-dev`/`main`. App changes go **upstream**; internal content diffs go
   in **`dictionary.tsv`**.
-- **Branch-protect** `develop`/`staging`/`master` on the internal server (the real guard
+- **Branch-protect** `develop`/`staging`/`main` on the internal server (the real guard
   against accidental direct pushes — not scriptable).
-- Hotfixes: prefer a throwaway branch (never merged); if you must commit to `master`,
-  re-author an equivalent fix upstream and run `reconcile-master.ps1` (see RUNBOOK / ADR-0014).
+- Hotfixes: prefer a throwaway branch (never merged); if you must commit to `main`,
+  re-author an equivalent fix upstream and run `reconcile-main.ps1` (see RUNBOOK / ADR-0014).
 
 ## Platform
 

@@ -1,0 +1,12 @@
+# SAMPLE dictionary (ADR-0012/0017). To set up the internal kit:
+#   copy dictionary.sample.tsv -> dictionary.tsv   and edit the real one.
+# (landing.ps1 uses dictionary.tsv only; the sample is never read and updates to the
+# kit never touch your real file. landing backs dictionary.tsv up to the internal
+# server's 'airgap-config' branch on every run.)
+#
+# One replacement per line:  <from><TAB><to>
+# Applied to every TEXT file on every sync. Keep keys PRECISE to avoid over-matching
+# (e.g. "eliya" also matches inside "eliyahu"). Lines starting with # and blank lines ignored.
+# Longer 'from' values are applied first automatically.
+
+eliya	dori

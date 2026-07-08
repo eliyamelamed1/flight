@@ -40,11 +40,15 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Invoke-Git {
-    $out = git -C $RepoPath @args
+    # Local Continue: git writes normal progress to stderr, and with the caller's output
+    # captured (2>&1) PS 5.1 would turn that into a fatal NativeCommandError under the
+    # script-level Stop. We gate on $LASTEXITCODE instead.
+    $ErrorActionPreference = 'Continue'
+    $out = git -C $RepoPath @args 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') failed ($LASTEXITCODE)`n$out" }
     return $out
 }
-function Try-Git { git -C $RepoPath @args 2>&1 | Out-Null; return $LASTEXITCODE }
+function Try-Git { $ErrorActionPreference = 'Continue'; git -C $RepoPath @args 2>&1 | Out-Null; return $LASTEXITCODE }
 
 if (-not (Test-Path (Join-Path $RepoPath '.git'))) { throw "Not a git repo: $RepoPath" }
 if (-not (Test-Path $Bundle))                      { throw "Bundle not found: $Bundle" }
@@ -69,8 +73,24 @@ Write-Host "[1/6] Verifying bundle..."
 Invoke-Git bundle verify $Bundle | Out-Null
 
 Write-Host "[2/6] Fetching all refs into refs/upstream/* (with prune)..."
+# Refuse a STALE bundle before touching the mirror: the fetch below force-updates
+# refs/upstream/* (so a rebased external history is absorbed, ADR-0007), which means
+# this guard is the only thing between an out-of-order bundle and pre-dev's content
+# silently regressing to older external main.
+if ((Try-Git rev-parse --verify --quiet $UpstreamMainRef) -eq 0) {
+    $bundleMainRef = $UpstreamMainRef -replace '^refs/upstream/', 'refs/'
+    $line = @(Invoke-Git bundle list-heads $Bundle $bundleMainRef) | Select-Object -First 1
+    if ($line -and "$line" -match '^([0-9a-f]{40,64})\s') {
+        $bundleTip  = $Matches[1]
+        $currentTip = "$(Invoke-Git rev-parse $UpstreamMainRef)".Trim()
+        # Older = bundle tip is a strict ancestor of what we already synced.
+        if ($bundleTip -ne $currentTip -and (Try-Git merge-base --is-ancestor $bundleTip $currentTip) -eq 0) {
+            throw "Stale bundle: its main ($($bundleTip.Substring(0,7))) is OLDER than the last synced main ($($currentTip.Substring(0,7))). Export a fresh bundle (takeoff) and retry."
+        }
+    }
+}
 Invoke-Git fetch --prune $Bundle `
-    'refs/heads/*:refs/upstream/heads/*' `
+    '+refs/heads/*:refs/upstream/heads/*' `
     '+refs/tags/*:refs/upstream/tags/*' | Out-Null
 
 if ((Try-Git rev-parse --verify --quiet $UpstreamMainRef) -ne 0) {

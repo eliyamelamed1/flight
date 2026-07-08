@@ -18,14 +18,19 @@
     being dropped is your temporary hotfix.
 
 .EXAMPLE
-    # dry run - review the diff first
+    # From the internal kit (defaults to the repo\ folder beside this script):
+    .\reconcile-main.ps1           # dry run - review the diff first
+    .\reconcile-main.ps1 -Force    # then actually do it
+
+.EXAMPLE
+    # Explicit repo path (engine-style invocation):
     .\reconcile-main.ps1 -RepoPath C:\src\app-internal
-    # then actually do it
     .\reconcile-main.ps1 -RepoPath C:\src\app-internal -Force
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$RepoPath,
+    # Defaults to the kit convention: the repo\ folder beside this script.
+    [string]$RepoPath,
     [string]$MainBranch    = 'main',
     [string]$StagingBranch = 'staging',
     [string]$Stamp,            # backup-tag timestamp; caller may pass one, else derived
@@ -33,12 +38,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $RepoPath) { $RepoPath = Join-Path $PSScriptRoot 'repo' }
 function Invoke-Git {
-    $out = git -C $RepoPath @args
+    # Local Continue: git writes normal progress to stderr, and with the caller's output
+    # captured (2>&1) PS 5.1 would turn that into a fatal NativeCommandError under the
+    # script-level Stop. We gate on $LASTEXITCODE instead.
+    $ErrorActionPreference = 'Continue'
+    $out = git -C $RepoPath @args 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') failed ($LASTEXITCODE)`n$out" }
     return $out
 }
-function Try-Git { git -C $RepoPath @args 2>&1 | Out-Null; return $LASTEXITCODE }
+function Try-Git { $ErrorActionPreference = 'Continue'; git -C $RepoPath @args 2>&1 | Out-Null; return $LASTEXITCODE }
 
 if (-not (Test-Path (Join-Path $RepoPath '.git'))) { throw "Not a git repo: $RepoPath" }
 foreach ($b in @($MainBranch,$StagingBranch)) {
@@ -47,6 +57,22 @@ foreach ($b in @($MainBranch,$StagingBranch)) {
 
 $status = Invoke-Git status --porcelain
 if ($status) { throw "Working tree is not clean. Commit/stash before reconciling.`n$status" }
+
+# If this clone tracks a server (the kit's repo\ does - landing points origin at it),
+# refuse to reconcile against STALE local copies of main/staging: promotions happen on
+# the server, so the dry-run diff must reflect the server's pipeline, not bootstrap-time
+# snapshots. Reconcile is destructive - fail loud, tell the user how to refresh.
+if ((Try-Git remote get-url origin) -eq 0) {
+    Invoke-Git fetch origin | Out-Null
+    foreach ($b in @($MainBranch, $StagingBranch)) {
+        if ((Try-Git rev-parse --verify --quiet "refs/remotes/origin/$b") -ne 0) { continue }
+        $localTip  = "$(Invoke-Git rev-parse "refs/heads/$b")".Trim()
+        $originTip = "$(Invoke-Git rev-parse "refs/remotes/origin/$b")".Trim()
+        if ($localTip -ne $originTip) {
+            throw "Local '$b' does not match origin/$b - a stale copy would make the reconcile diff lie. Refresh it first: git -C `"$RepoPath`" branch -f $b origin/$b   (then re-run)"
+        }
+    }
+}
 
 # Commits on main that are NOT on staging = the temporary hotfix(es) about to be dropped.
 $onlyOnMain = Invoke-Git log --oneline "$StagingBranch..$MainBranch"

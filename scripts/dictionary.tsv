@@ -1,7 +1,0 @@
-# Internal dictionary transform (ADR-0012).
-# One replacement per line:  <from><TAB><to>
-# Applied to every TEXT file on every sync. Keep keys PRECISE to avoid over-matching
-# (e.g. "eliya" also matches inside "eliyahu"). Lines starting with # and blank lines ignored.
-# Longer 'from' values are applied first automatically.
-
-eliya	dori

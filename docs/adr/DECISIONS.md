@@ -445,3 +445,95 @@ branch (GitHub's default). The scripts and docs previously named the internal de
 
 **Alternatives considered:** keep `master` as the internal deploy branch while the external is
 `main` — rejected; the two-name split was a persistent source of confusion and left stray branches.
+
+---
+
+## ADR-0016 — Two zero-setup wrapper commands (`takeoff` / `landing`) with a folder convention and per-run URL prompt
+
+**Status:** Accepted. Adds an operator layer on top of the engine scripts; sync semantics
+(ADR-0012/0013) unchanged.
+
+**Context:** Operating the toolkit meant retyping three long paths per command and choosing
+the right script (bootstrap vs sync) by hand. The operator wants one command per side
+("takeoff" = external export, "landing" = internal import), run independently on each side,
+with each run asking for the one thing that varies: the repo URL.
+
+**Decision:**
+- **Kit convention:** the folder containing the wrapper is the kit. `repo\` (the git repo)
+  and `transfer\app.bundle` (the asset) always live beside the script; the internal kit also
+  holds `dictionary.tsv`. `repo/`, `transfer/`, `*.bundle` are gitignored runtime assets.
+- **`takeoff.ps1`** (external): prompts every run for the GitHub repo URL (no stored default),
+  points `origin` at it, refreshes, writes `transfer\app.bundle` via `export-bundle.ps1`.
+  On first run it creates `repo\` as a **bare relay clone** with a `+refs/heads/*:refs/heads/*`
+  fetch refspec, so branch tips mirror the server exactly on every refresh (a plain working
+  clone's local tips can lag `origin` after fetch — the relay closes that gap).
+- **`landing.ps1`** (internal): prompts every run for the internal server URL, **auto-detects**
+  first run (no `repo\.git` → `bootstrap-internal.ps1`) vs steady state (→
+  `sync-from-bundle.ps1`), then sets `origin` to the URL and pushes: all four pipeline
+  branches on first run (seeding the server), `pre-dev` only afterwards (ADR-0013 — promotion
+  moves the rest). A failed push warns loudly but does not undo the successful local sync.
+- `takeoff.cmd` / `landing.cmd` are double-click launchers (`-ExecutionPolicy Bypass`).
+- `export-bundle.ps1` now accepts bare repos; `reconcile-main.ps1` `-RepoPath` defaults to
+  the kit's `repo\`.
+
+**Alternatives considered:**
+- Config file with saved paths/URLs — rejected: the operator explicitly prefers being asked
+  each run over hidden stored state.
+- Wrapper args with defaults — rejected: still paths to remember; the folder convention
+  removes them entirely.
+- Mirror clone (`--mirror`) for the relay — rejected: also drags `refs/pull/*` etc. from
+  GitHub into every bundle; a bare clone with heads+tags refspecs bundles just branches+tags.
+
+**Hardening (from the adversarial review of this change):**
+- Landing's first-run detection is failure-safe: a bootstrap that throws deletes its partial
+  clone (so the next run bootstraps again), a killed-mid-run leftover is caught by a
+  half-bootstrap guard (no `develop` locally or on origin → fail loud), and a fresh kit
+  pointed at an already-seeded server is told to reconnect via clone instead of bootstrapping
+  unrelated history.
+- Takeoff (re)writes the relay's heads+tags refspecs **every run**, so a first run that died
+  between clone and config heals itself, and re-pointing at a different URL prunes the old
+  remote's branches *and tags* from future bundles.
+- `sync-from-bundle.ps1` now force-updates the `refs/upstream/*` mirror (`+refs/heads/*`,
+  absorbing rebased external history per ADR-0007) and **refuses stale bundles** (bundle main
+  strictly older than the last synced main) — keeping "out-of-order bundle is harmless" true
+  as a clean refusal rather than a silent content regression on `pre-dev`.
+- `reconcile-main.ps1` refuses to run against local `main`/`staging` that don't match
+  `origin/*` (the kit's local copies are bootstrap-time snapshots; the ADR-0014 dry-run diff
+  must reflect the server's promoted pipeline).
+- Push failures in landing distinguish server rejection (diverged history — never blind
+  force-push) from unreachability; the prompt loops fail cleanly on non-interactive hosts.
+
+---
+
+## ADR-0017 — The dictionary lives in the internal kit; only a sample is committed; landing auto-versions it to `airgap-config`
+
+**Status:** Accepted. Refines where the ADR-0012 dictionary is stored and how it survives.
+
+**Context:** The dictionary is the *entire* internal delta (ADR-0012), yet it was a single
+unversioned file committed to the toolkit with demo content. Two failure modes: refreshing a
+kit from the toolkit overwrites the operator's real pairs with the demo pair, and losing the
+kit folder loses the internal configuration entirely. It also cannot live inside the synced
+repo (every sync force-resets content to external main), and committing real values to the
+toolkit would carry internal naming to the external network — the wrong side of the gap.
+
+**Decision:**
+- The toolkit commits only **`dictionary.sample.tsv`**; `dictionary.tsv` is gitignored.
+  Operators create the real file once (`copy dictionary.sample.tsv dictionary.tsv`) in the
+  internal kit and edit it there. Landing refuses to run without it — the sample is never
+  read directly, so demo pairs can never silently apply to a real repo.
+- Every landing **backs `dictionary.tsv` up** to an orphan **`airgap-config`** branch on
+  the internal server (git plumbing: `hash-object`/`mktree`/`commit-tree`; commits only on
+  content change; fast-forwards from `origin/airgap-config` first so multiple kits converge;
+  pushed alongside the sync branches). Backup failures warn loudly but never undo a
+  successful sync.
+- A connected kit whose `dictionary.tsv` is **missing** restores the last backed-up copy
+  from `origin/airgap-config` automatically before syncing.
+- A plain-language `README.md` ships inside the kit covering setup, the dictionary, and
+  recovery.
+
+**Alternatives considered:**
+- Real dictionary committed in the toolkit repo — rejected: leaks internal-specific naming
+  to the external side and reintroduces update-clobbering.
+- Dedicated config repo on the internal server — rejected: a second repo, a second URL and
+  extra ceremony for a one-file concern.
+- Storing it inside the synced repo — impossible: wiped by every sync (`read-tree --reset`).

@@ -24,9 +24,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Invoke-Git { git -C $RepoPath @args; if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') failed ($LASTEXITCODE)" } }
+function Invoke-Git {
+    # Local Continue: git writes normal progress to stderr, and with the caller's output
+    # captured (2>&1) PS 5.1 would turn that into a fatal NativeCommandError under the
+    # script-level Stop. We gate on $LASTEXITCODE instead.
+    $ErrorActionPreference = 'Continue'
+    $out = git -C $RepoPath @args 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') failed ($LASTEXITCODE)`n$out" }
+    return $out
+}
 
-if (-not (Test-Path (Join-Path $RepoPath '.git'))) { throw "Not a git repo: $RepoPath" }
+# Accept a working clone (.git dir) or a bare relay clone (HEAD + objects at top level,
+# as created by takeoff.ps1).
+$isRepo = (Test-Path (Join-Path $RepoPath '.git')) -or
+          ((Test-Path (Join-Path $RepoPath 'HEAD')) -and (Test-Path (Join-Path $RepoPath 'objects')))
+if (-not $isRepo) { throw "Not a git repo: $RepoPath" }
 
 if ($Refresh) {
     Write-Host "Refreshing all refs from origin..."

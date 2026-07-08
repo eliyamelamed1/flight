@@ -2,6 +2,19 @@
 
 - **Air gap** — Physical/network isolation; the two repos can never talk directly. All
   transfer happens via files (git bundles) carried across.
+- **Kit** — The folder a wrapper script lives in (a copy of `scripts/`). Everything the
+  wrappers need sits beside them by convention: `repo\` (the git repo), `transfer\`
+  (the bundle), and on the internal side `dictionary.tsv` — created once from
+  `dictionary.sample.tsv` (ADR-0016/0017).
+- **`airgap-config`** — Orphan branch on the internal server where landing automatically
+  versions `dictionary.tsv` each run; the restore source when a kit loses its dictionary
+  (ADR-0017).
+- **Takeoff** — The external-side everyday command (`takeoff.ps1`): prompts for the GitHub
+  repo URL, refreshes the kit's `repo\` (a bare relay clone), and writes
+  `transfer\app.bundle` for carrying across the gap.
+- **Landing** — The internal-side everyday command (`landing.ps1`): prompts for the internal
+  server URL, consumes `transfer\app.bundle` (first run bootstraps, later runs advance
+  `pre-dev`), and pushes the result to that URL.
 - **External repo** — The internet-side repository. Absolute source of truth for
   application code.
 - **Internal repo** — The air-gapped repository. Holds application code plus internal-only

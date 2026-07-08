@@ -4,6 +4,15 @@
 # Rendered build artifact (ADR-0008) — generated per build, never committed
 config.json
 
+# Per-kit runtime assets created beside the scripts by takeoff/landing — never commit
+repo/
+transfer/
+*.bundle
+
+# The REAL dictionary holds internal-specific values and must never reach the toolkit
+# repo (it travels to the external side). Only dictionary.sample.tsv is committed.
+dictionary.tsv
+
 # OS / editor noise
 Thumbs.db
 .DS_Store

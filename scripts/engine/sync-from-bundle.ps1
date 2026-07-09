@@ -24,7 +24,7 @@
     handled here - protect those with branch protection on your internal server.
 
 .EXAMPLE
-    .\sync-from-bundle.ps1 -RepoPath C:\src\app-internal -Bundle D:\transfer\app.bundle `
+    .\sync-from-bundle.ps1 -RepoPath C:\src\app-internal -Bundle D:\bundles\app.bundle `
         -Dictionary C:\tools\airgap\dictionary.json
 #>
 [CmdletBinding()]

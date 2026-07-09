@@ -1,21 +1,22 @@
 <#
 .SYNOPSIS
     TAKEOFF (external side, internet). The everyday one-command export: reads the
-    GitHub repo URL from repos.json (prompting if unset), keeps .\repo as a bare relay
-    clone of it, and writes a full bundle into a per-run folder
+    GitHub repo URL from repos.json (prompting if unset), keeps .\repo\external as a bare
+    relay clone of it, and writes a full bundle into a per-run folder
     .\toUpload\<repo>-<timestamp>\app.bundle. Carry that folder across the air gap
     into the internal kit's toUpload\ and run landing there.
 
 .DESCRIPTION
     This script lives in engine\; the kit root is one level up (the folder holding
-    takeoff.cmd). Folder convention - everything lives in the kit root:
-        repo\                 bare relay clone of the URL (created on first run)
+    '1 - takeoff.cmd'). Folder convention - everything lives in the kit root:
+        repo\external\        bare relay clone of the URL (created on first run;
+                              repo\internal\ belongs to landing - one kit can run both)
         toUpload\<name>\      one folder per takeoff run (<repo>-<yyyy-MM-dd_HH-mm-ss>)
                               holding app.bundle - the thing you carry across; landing
                               moves it to its doneUpload\ once the push succeeded
-        repos.json            per-kit remote URLs - copy repos.sample.json and fill
-                              the "externalRepoUrl" key (leave "internalRepoUrl" empty
-                              on this side)
+        repos.json            per-kit remote URLs - a JSON object with an
+                              "externalRepoUrl" key (this side) and/or "internalRepoUrl"
+                              (landing's side)
 
     The repo URL resolves in this order: -RepoUrl parameter, then repos.json key
     "externalRepoUrl", then an interactive prompt. The URL becomes origin, so the
@@ -25,7 +26,7 @@
     refresh updates branch tips in place - the bundle is always as fresh as the server.
 
 .EXAMPLE
-    .\takeoff.cmd
+    & '.\1 - takeoff.cmd'
     #   Using external repo URL from repos.json: https://github.com/org/app.git
 #>
 [CmdletBinding()]
@@ -44,8 +45,21 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 
 # This script lives in engine\ - the kit root (repo\, toUpload\, repos.json) is one level up.
 $here      = Split-Path -Parent $PSScriptRoot
-$repo      = Join-Path $here 'repo'
+# Each side keeps its own repo (takeoff: repo\external, landing: repo\internal) so ONE kit
+# can run both commands without them fighting over the same folder (ADR-0021).
+$repo      = Join-Path $here 'repo\external'
 $reposFile = Join-Path $here 'repos.json'
+
+# Older kits kept the relay clone directly in repo\ (bare: HEAD + objects at top level,
+# no .git) - move it into repo\external once, transparently. Move only the relay's own
+# entries: repo\internal may already exist beside it (landing ran first) and must stay.
+$legacy = Join-Path $here 'repo'
+if ((Test-Path (Join-Path $legacy 'HEAD')) -and (Test-Path (Join-Path $legacy 'objects')) -and -not (Test-Path $repo)) {
+    New-Item -ItemType Directory -Path $repo | Out-Null
+    Get-ChildItem -Force $legacy | Where-Object { $_.Name -notin @('external', 'internal') } |
+        Move-Item -Destination $repo
+    Write-Host "One-time migration: moved the relay clone from repo\ to repo\external."
+}
 # The bundle path ($bundle) is derived AFTER the URL is known - its folder is named
 # after the repo: toUpload\<repo>-<timestamp>\app.bundle.
 
@@ -74,7 +88,7 @@ while (-not $RepoUrl) {
     try { $RepoUrl = (Read-Host 'GitHub repo URL (e.g. https://github.com/org/app.git)').Trim(); $prompted = $true }
     catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""externalRepoUrl"" key in repos.json." }
 }
-if ($prompted) { Write-Host "Tip: put this URL in repos.json (""externalRepoUrl"" key, copy repos.sample.json) to skip this prompt." }
+if ($prompted) { Write-Host "Tip: to skip this prompt, create repos.json next to the launchers: { ""externalRepoUrl"": ""<this URL>"" }" }
 
 # Per-run bundle folder, named after the repo: toUpload\<repo>-<yyyy-MM-dd_HH-mm-ss>\.
 # GetFileName handles URLs, scp-style remotes and local paths alike.
@@ -98,15 +112,15 @@ function Set-RelayRefspecs {
 }
 
 if ($isRepo) {
-    Write-Host "repo\ found - pointing origin at $RepoUrl"
+    Write-Host "repo\external found - pointing origin at $RepoUrl"
     git -C $repo remote get-url origin 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { Invoke-Git -C $repo remote set-url origin $RepoUrl | Out-Null }
     else                     { Invoke-Git -C $repo remote add    origin $RepoUrl | Out-Null }
     if (Test-Path (Join-Path $repo '.git')) {
         # Never apply the relay refspecs here: fetching into refs/heads of a working
         # clone would be refused for the checked-out branch.
-        Write-Host "note: repo\ is a working clone, so its LOCAL branch tips are what gets bundled"
-        Write-Host "      (pull to refresh them - or delete repo\ and re-run takeoff to get a"
+        Write-Host "note: repo\external is a working clone, so its LOCAL branch tips are what gets bundled"
+        Write-Host "      (pull to refresh them - or delete repo\external and re-run takeoff to get a"
         Write-Host "      bare relay clone that refreshes itself)."
     } else {
         Set-RelayRefspecs
@@ -116,7 +130,7 @@ if ($isRepo) {
         if (@(Get-ChildItem -Force $repo).Count -gt 0) { throw "$repo exists but is not a git repo. Remove it and re-run." }
         Remove-Item $repo -Force   # empty leftover (e.g. from a failed clone)
     }
-    Write-Host "First run - creating bare relay clone of $RepoUrl -> repo\"
+    Write-Host "First run - creating bare relay clone of $RepoUrl -> repo\external"
     Invoke-Git clone --bare $RepoUrl $repo | Out-Null
     Set-RelayRefspecs
 }

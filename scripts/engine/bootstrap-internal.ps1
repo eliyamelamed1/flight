@@ -4,7 +4,7 @@
     and create the promotion branches develop/staging/main from it (main is the deploy branch).
 
 .EXAMPLE
-    .\bootstrap-internal.ps1 -RepoPath C:\src\app-internal -Bundle D:\transfer\app.bundle `
+    .\bootstrap-internal.ps1 -RepoPath C:\src\app-internal -Bundle D:\bundles\app.bundle `
         -Dictionary C:\tools\airgap\dictionary.json
 #>
 [CmdletBinding()]

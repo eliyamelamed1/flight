@@ -8,19 +8,21 @@
 
 .DESCRIPTION
     This script lives in engine\; the kit root is one level up (the folder holding
-    landing.cmd). Folder convention - everything lives in the kit root:
+    '2 - landing.cmd'). Folder convention - everything lives in the kit root:
         toUpload\<name>\      drop the folder produced by takeoff here (exactly one
                               pending folder per run - landing refuses if it finds more)
         doneUpload\<name>\    where the folder is moved after a SUCCESSFUL push - the
                               record of what has already been landed
-        repo\                 the internal repo (created automatically on first run)
-        dictionary.json       your "find": "replace" transform pairs - create it ONCE from
-                              dictionary.sample.json, then edit freely. Every run backs
-                              it up to the server's 'airgap-config' branch, and a kit
-                              that lost it restores the backup automatically.
-        repos.json            per-kit remote URLs - copy repos.sample.json and fill
-                              the "internalRepoUrl" key (leave "externalRepoUrl" empty
-                              on this side)
+        repo\internal\        the internal repo (created automatically on first run;
+                              repo\external\ belongs to takeoff - one kit can run both)
+        dictionary.json       your "find": "replace" transform pairs - the first run
+                              writes a starter file and stops so you can fill it in.
+                              Every run backs it up to the server's 'airgap-config'
+                              branch, and a kit that lost it restores the backup
+                              automatically.
+        repos.json            per-kit remote URLs - a JSON object with an
+                              "internalRepoUrl" key (this side) and/or "externalRepoUrl"
+                              (takeoff's side)
 
     The internal repo URL resolves in this order: -RepoUrl parameter, then repos.json
     key "internalRepoUrl", then an interactive prompt. It becomes origin and receives
@@ -29,7 +31,7 @@
         later runs: pre-dev only                      (promotion moves the rest up)
 
 .EXAMPLE
-    .\landing.cmd
+    & '.\2 - landing.cmd'
     #   Using internal repo URL from repos.json: https://git.internal.local/team/app.git
 #>
 [CmdletBinding()]
@@ -49,12 +51,24 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 # This script lives in engine\ - the kit root (repo\, toUpload\, the dictionary and
 # repos.json) is one level up.
 $here       = Split-Path -Parent $PSScriptRoot
-$repo       = Join-Path $here 'repo'
+# Each side keeps its own repo (takeoff: repo\external, landing: repo\internal) so ONE kit
+# can run both commands without them fighting over the same folder (ADR-0021).
+$repo       = Join-Path $here 'repo\internal'
 $toUpload   = Join-Path $here 'toUpload'
 $doneUpload = Join-Path $here 'doneUpload'
 $dict       = Join-Path $here 'dictionary.json'
-$sample     = Join-Path $here 'dictionary.sample.json'
 $reposFile  = Join-Path $here 'repos.json'
+
+# Older kits kept the internal working clone directly in repo\ (has a .git folder) -
+# move it into repo\internal once, transparently. Move only the clone's own entries:
+# repo\external may already exist beside it (takeoff ran first) and must stay.
+$legacy = Join-Path $here 'repo'
+if ((Test-Path (Join-Path $legacy '.git')) -and -not (Test-Path $repo)) {
+    New-Item -ItemType Directory -Path $repo | Out-Null
+    Get-ChildItem -Force $legacy | Where-Object { $_.Name -notin @('external', 'internal') } |
+        Move-Item -Destination $repo
+    Write-Host "One-time migration: moved the internal repo from repo\ to repo\internal."
+}
 
 function Invoke-Git {
     $out = git @args 2>&1
@@ -73,21 +87,17 @@ if ($pending.Count -gt 1) {
 $bundleFolder = $pending[0]
 $bundle = Join-Path $bundleFolder.FullName 'app.bundle'
 Write-Host "Landing bundle: toUpload\$($bundleFolder.Name)"
-$dictHelp = "No dictionary at $dict - copy dictionary.sample.json to dictionary.json (same folder) and edit in your real ""find"": ""replace"" pairs."
-
 function Initialize-Dictionary {
-    # Returns $true when dictionary.json is ready to use. If it is missing, create it from the
-    # committed sample and return $false so the caller STOPS - the operator fills in their real
-    # pairs before the first sync, so the sample's placeholder values are never injected.
-    # Throws only if even the sample is gone.
+    # Returns $true when dictionary.json is ready to use. If it is missing, write a starter
+    # template and return $false so the caller STOPS - the operator fills in their real
+    # pairs before the first sync (the placeholder key matches nothing, so even an
+    # unedited starter can never inject wrong content).
     if (Test-Path $dict) { return $true }
-    if (Test-Path $sample) {
-        Copy-Item $sample $dict
-        Write-Host "Created dictionary.json from the sample. Open it, replace the sample pairs with"
-        Write-Host "your real ""find"": ""replace"" pairs, then re-run landing."
-        return $false
-    }
-    throw $dictHelp
+    $starter = "{`r`n  ""find-this-text"": ""replace-with-this""`r`n}`r`n"
+    [System.IO.File]::WriteAllText($dict, $starter, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "Created a starter dictionary.json. Open it, replace the placeholder pair with"
+    Write-Host "your real ""find"": ""replace"" pairs, then re-run landing."
+    return $false
 }
 
 function Backup-Dictionary {
@@ -150,7 +160,7 @@ while (-not $RepoUrl) {
     try { $RepoUrl = (Read-Host 'Internal repo URL (git server this kit pushes to)').Trim(); $prompted = $true }
     catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""internalRepoUrl"" key in repos.json." }
 }
-if ($prompted) { Write-Host "Tip: put this URL in repos.json (""internalRepoUrl"" key, copy repos.sample.json) to skip this prompt." }
+if ($prompted) { Write-Host "Tip: to skip this prompt, create repos.json next to the launchers: { ""internalRepoUrl"": ""<this URL>"" }" }
 
 $firstRun = -not (Test-Path (Join-Path $repo '.git'))
 if ($firstRun) {
@@ -162,7 +172,7 @@ if ($firstRun) {
     # unrelated history that can never be pushed - reconnect with a clone instead.
     $remoteHeads = git ls-remote --heads $RepoUrl 2>&1
     if ($LASTEXITCODE -eq 0 -and "$remoteHeads" -match 'refs/heads/pre-dev') {
-        throw ("The server at $RepoUrl already has pre-dev, but this kit has no repo\ (fresh kit copy?). " +
+        throw ("The server at $RepoUrl already has pre-dev, but this kit has no repo\internal (fresh kit copy?). " +
                "Do NOT bootstrap - reconnect first:`n" +
                "    git clone $RepoUrl `"$repo`"`n" +
                "    git -C `"$repo`" switch pre-dev`n" +
@@ -186,7 +196,7 @@ if ($firstRun) {
     $hasLocalDevelop = ($LASTEXITCODE -eq 0)
     git -C $repo rev-parse --verify --quiet refs/remotes/origin/develop 2>&1 | Out-Null
     if (-not $hasLocalDevelop -and $LASTEXITCODE -ne 0) {
-        throw "$repo looks half-bootstrapped (no develop branch, locally or on origin). Delete repo\ and re-run landing."
+        throw "$repo looks half-bootstrapped (no develop branch, locally or on origin). Delete repo\internal and re-run landing."
     }
     if (-not (Test-Path $dict)) {
         # Self-heal: every landing backs the dictionary up to the server's airgap-config

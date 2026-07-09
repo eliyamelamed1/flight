@@ -9,24 +9,27 @@ Everything else the commands need lives right here beside them:
 
 ```
 kit\
-├─ takeoff.cmd                   run this on the EXTERNAL (internet) machine
-├─ landing.cmd                   run this on the INTERNAL (air-gapped) machine
-├─ repos.sample.json             template for your repo URLs — copy to repos.json
-├─ dictionary.sample.json        template for your find/replace pairs (internal only)
-├─ repo\                         the git repo (the commands create it — don't make it yourself)
+├─ 1 - takeoff.cmd               run this on the EXTERNAL (internet) machine
+├─ 2 - landing.cmd               run this on the INTERNAL (air-gapped) machine
+├─ repos.json                    your repo URLs (create once — see below)
+├─ dictionary.json               your find/replace pairs (internal only — see below)
+├─ repo\external\                takeoff's relay clone   (auto-created — don't make these yourself)
+├─ repo\internal\                landing's internal repo (each command has its own, so one
+│                                kit can even run BOTH commands, e.g. when testing locally)
 ├─ toUpload\<name>\app.bundle    one folder per takeoff run — the thing you carry across
 ├─ doneUpload\<name>\            where landing moves a folder once it landed successfully
 └─ engine\                       all the PowerShell (including takeoff.ps1/landing.ps1) — you never run these directly
 ```
 
-> **Tip:** double-click the **`.cmd`** launcher (`takeoff.cmd` / `landing.cmd`). On a
-> locked-down host that blocks PowerShell scripts, the `.cmd` is the way in — it already runs
-> with `-ExecutionPolicy Bypass`, so you don't have to change any policy yourself.
+> **Tip:** double-click the **`.cmd`** launcher (`1 - takeoff.cmd` / `2 - landing.cmd`;
+> the numbers are the run order). On a locked-down host that blocks PowerShell scripts,
+> the `.cmd` is the way in — it already runs with `-ExecutionPolicy Bypass`, so you don't
+> have to change any policy yourself.
 > (`git` must be installed and on `PATH`; the command tells you if it isn't.)
 
 ## On the EXTERNAL (internet) machine
 
-1. Double-click `takeoff.cmd` (or run `.\engine\takeoff.ps1` from a PowerShell window).
+1. Double-click `1 - takeoff.cmd` (or run `.\engine\takeoff.ps1` from a PowerShell window).
 2. It reads the **GitHub repo URL** from `repos.json` (see below) — or asks for it if
    you haven't set that up.
 3. It writes the bundle into a new folder named after the repo and the moment it ran:
@@ -35,10 +38,10 @@ kit\
 
 ## On the INTERNAL (air-gapped) machine
 
-1. Double-click `landing.cmd` (or run `.\engine\landing.ps1` from a PowerShell window).
-2. **First time only:** if you haven't set up your dictionary yet, landing creates
-   `dictionary.json` for you from the sample, then stops and asks you to fill in your real
-   pairs (see below). Edit it, then run landing again.
+1. Double-click `2 - landing.cmd` (or run `.\engine\landing.ps1` from a PowerShell window).
+2. **First time only:** if you haven't set up your dictionary yet, landing writes a starter
+   `dictionary.json`, then stops and asks you to fill in your real pairs (see below).
+   Edit it, then run landing again.
 3. It reads your **internal git server URL** from `repos.json` — or asks for it if you
    haven't set that up.
 4. Done. The first real run sets everything up and pushes `pre-dev/develop/staging/main`;
@@ -52,19 +55,18 @@ Then promote `pre-dev → develop → staging → main` with your normal PR/CI p
 
 ## The repos file (skip the URL prompt)
 
-Copy `repos.sample.json` → `repos.json` (same folder) and fill in **only your side's key**:
+Create `repos.json` next to the launchers, with **only your side's key**:
 
 ```json
 {
-  "externalRepoUrl": "https://github.com/org/app.git",
-  "internalRepoUrl": ""
+  "externalRepoUrl": "https://github.com/org/app.git"
 }
 ```
 
 - Takeoff uses `"externalRepoUrl"`, landing uses `"internalRepoUrl"`. An empty or missing
-  key just means that command asks you for the URL, like before. `-RepoUrl <url>` on the
-  command line always wins.
-- `repos.json` is yours and is never committed. **Don't fill the internal URL on the
+  key just means that command asks you for the URL (and shows you exactly what to put in
+  the file). `-RepoUrl <url>` on the command line always wins.
+- `repos.json` is yours and is never committed. **Don't put the internal URL on the
   external kit** — internal server names shouldn't travel to the internet side.
 
 ## The dictionary (internal kit only)
@@ -80,9 +82,9 @@ landing:
 ```
 
 - **First-time setup is guided:** on the first landing, if `dictionary.json` doesn't exist,
-  landing copies `dictionary.sample.json` → `dictionary.json` and stops so you can put your real
-  pairs in. (The sample is never used directly, and a later kit update can't overwrite your
-  values.)
+  landing writes a starter file with a placeholder pair and stops so you can put your real
+  pairs in. (The placeholder matches nothing, so it can never inject wrong content, and a
+  later kit update can't overwrite your values.)
 - **To change internal content:** edit `dictionary.json`, run landing. That's it.
 - **Backups are automatic:** every landing saves your dictionary to the `airgap-config` branch
   on your internal server. If the kit (or just the file) is ever lost, landing restores the
@@ -103,10 +105,12 @@ The commands fail with a message that says what to do. The most common ones:
   the message shows the two commands to reconnect instead of starting over.
 
 > **Updating an existing kit copy:** older kits had `takeoff.ps1` / `landing.ps1` at the top
-> level and used a `transfer\` folder for the bundle. If you refresh a deployed kit by
-> copying this folder over it, **delete those two old top-level files** — they still run
-> but are outdated (the current ones live in `engine\`) — and retire `transfer\` (bundles
-> now live in per-run `toUpload\` folders). Your `dictionary.json`, `repos.json` and
-> `repo\` are untouched by a copy-over.
+> level (later `takeoff.cmd` / `landing.cmd` without the numbers) and used a `transfer\`
+> folder for the bundle. If you refresh a deployed kit by copying this folder over it,
+> **delete the old top-level launcher/script files** — they still run but are outdated —
+> and retire `transfer\` (bundles now live in per-run `toUpload\` folders). Your
+> `dictionary.json` and `repos.json` are untouched by a copy-over; an old `repo\` is
+> migrated automatically into `repo\external` (by takeoff) or `repo\internal` (by
+> landing) on the next run.
 
 Full operating guide (steady-state, hotfix, reconcile): `docs/RUNBOOK.md` in the toolkit repo.

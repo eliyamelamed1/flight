@@ -27,31 +27,31 @@ External refs are mirrored read-only under `refs/upstream/heads/*` and `refs/ups
 
 ## Tooling lives OUTSIDE the repo — the "kit"
 
-Copy `scripts/` to each side; that folder is the kit. The launchers (`takeoff.cmd`,
-`landing.cmd`) resolve everything by convention in the **kit root** (ADR-0019):
+Copy `scripts/` to each side; that folder is the kit. The launchers (`1 - takeoff.cmd`,
+`2 - landing.cmd` — the numbers are the run order) resolve everything by convention in
+the **kit root** (ADR-0019):
 
 ```
 external kit\                                internal kit\
-├─ takeoff.cmd           ← you run           ├─ landing.cmd          ← you run
-├─ repos.json   ← yours (from sample)        ├─ repos.json   ← yours (from sample)
-├─ repos.sample.json     template            ├─ repos.sample.json    template
-├─ repo\        bare relay clone (auto)      ├─ repo\        internal repo (auto on 1st run)
+├─ 1 - takeoff.cmd       ← you run           ├─ 2 - landing.cmd      ← you run
+├─ repos.json   ← yours (create once)        ├─ repos.json   ← yours (create once)
+├─ repo\external\  bare relay clone (auto)   ├─ repo\internal\  internal repo (auto on 1st run)
 ├─ toUpload\<repo>-<ts>\app.bundle           ├─ toUpload\<name>\     drop the takeoff folder here
 │               one folder per takeoff run   ├─ doneUpload\<name>\   moved here after a good push
-└─ engine\      takeoff.ps1,                 ├─ dictionary.json      ← yours (from sample)
-                export-bundle.ps1            ├─ dictionary.sample.json template
-                                             └─ engine\      landing.ps1 + bootstrap/sync/
+└─ engine\      takeoff.ps1,                 ├─ dictionary.json      ← yours (starter auto-written)
+                export-bundle.ps1            └─ engine\      landing.ps1 + bootstrap/sync/
                                                              reconcile/render .ps1
 ```
 
-Only the `.cmd` launchers and the sample/config files sit at the top of the kit — the
+Only the `.cmd` launchers and your two config files sit at the top of the kit — the
 `engine\` subfolder holds ALL the PowerShell (including `takeoff.ps1`/`landing.ps1`),
 which you never run directly in the everyday flow.
 
 Each command resolves its one URL as: `-RepoUrl` parameter → `repos.json` (takeoff reads
 `"externalRepoUrl"` = the GitHub repo it bundles from; landing reads `"internalRepoUrl"` =
-the server it pushes to) → interactive prompt. Copy `repos.sample.json` → `repos.json` and
-fill only your side's key; `repos.json` is gitignored, like the dictionary.
+the server it pushes to) → interactive prompt. Create `repos.json` once with only your
+side's key (the prompt shows the exact shape); `repos.json` is gitignored, like the
+dictionary.
 
 **Bundle handoff (ADR-0020):** each takeoff writes into a fresh
 `toUpload\<repo>-<yyyy-MM-dd_HH-mm-ss>\` folder; you carry that folder into the internal
@@ -60,7 +60,10 @@ are pending — land them one at a time, oldest first) and moves it to `doneUplo
 after the push to the internal server succeeded, so `toUpload\` = still to land,
 `doneUpload\` = landed history.
 `repo\`, `toUpload\` and `doneUpload\` are runtime assets — gitignored, never committed to
-this toolkit.
+this toolkit. Each command keeps its own repo (`repo\external` for takeoff,
+`repo\internal` for landing), so a single kit can run both sides — useful when testing
+the round trip on one machine (ADR-0021). Old kits with the repo directly in `repo\` are
+migrated automatically on the next run.
 
 ---
 
@@ -70,13 +73,13 @@ Run from the kit root:
 
 ```powershell
 # 1. EXTERNAL kit
-.\takeoff.cmd                 # URL from repos.json "externalRepoUrl" (prompts if unset)
-                              # -> refreshes repo\ -> writes toUpload\<repo>-<timestamp>\app.bundle
+.\'1 - takeoff.cmd'           # URL from repos.json "externalRepoUrl" (prompts if unset)
+                              # -> refreshes repo\external -> writes toUpload\<repo>-<timestamp>\app.bundle
 
 # 2. Carry that toUpload\<name> folder across the air gap into the internal kit's toUpload\
 
 # 3. INTERNAL kit
-.\landing.cmd                 # URL from repos.json "internalRepoUrl" (prompts if unset)
+.\'2 - landing.cmd'           # URL from repos.json "internalRepoUrl" (prompts if unset)
                               # first run : bootstrap (clone + first sync + create branches),
                               #             pushes pre-dev/develop/staging/main
                               # later runs: advance pre-dev only, push pre-dev
@@ -94,15 +97,15 @@ internal server.
 
 ```powershell
 # External: first/every full bundle
-C:\tools\airgap\engine\export-bundle.ps1 -RepoPath C:\src\app -Out D:\transfer\app.bundle -Refresh
+C:\tools\airgap\engine\export-bundle.ps1 -RepoPath C:\src\app -Out D:\bundles\app.bundle -Refresh
 
 # Internal one-time (clone + first sync + create develop/staging/main from pre-dev):
 C:\tools\airgap\engine\bootstrap-internal.ps1 -RepoPath C:\src\app-internal `
-    -Bundle D:\transfer\app.bundle -Dictionary C:\tools\airgap\dictionary.json
+    -Bundle D:\bundles\app.bundle -Dictionary C:\tools\airgap\dictionary.json
 
 # Internal each update — advance pre-dev only
 C:\tools\airgap\engine\sync-from-bundle.ps1 -RepoPath C:\src\app-internal `
-    -Bundle D:\transfer\app.bundle -Dictionary C:\tools\airgap\dictionary.json
+    -Bundle D:\bundles\app.bundle -Dictionary C:\tools\airgap\dictionary.json
 ```
 
 The sync (ADR-0013) verifies the bundle → mirrors all refs into `refs/upstream/*` → adds one
@@ -111,10 +114,11 @@ warns on any zero-match key (`-Strict` to fail instead).
 
 ## Changing internal content — the dictionary (ADR-0017)
 
-Your real pairs live in the internal kit's **`dictionary.json`** — created ONCE by copying
-`dictionary.sample.json` (only the sample is committed to the toolkit, so kit updates can
-never clobber your values). It's a JSON object of `"find": "replace"` pairs; edit it and it
-takes effect on the next landing. Keep keys PRECISE — `"eliya"` also matches inside `"eliyahu"`.
+Your real pairs live in the internal kit's **`dictionary.json`** — the first landing writes
+a starter file (placeholder pair that matches nothing) and stops so you can fill it in;
+the file itself is gitignored, so kit updates can never clobber your values. It's a JSON
+object of `"find": "replace"` pairs; edit it and it takes effect on the next landing.
+Keep keys PRECISE — `"eliya"` also matches inside `"eliyahu"`.
 ```json
 {
   "eliya": "dori"
@@ -125,8 +129,8 @@ takes effect on the next landing. Keep keys PRECISE — `"eliya"` also matches i
 orphan **`airgap-config`** branch (only when it changed). A kit that lost the file restores
 the last backed-up copy automatically on the next landing; to restore by hand:
 ```powershell
-git -C .\repo fetch origin
-git -C .\repo show origin/airgap-config:dictionary.json | Set-Content dictionary.json -Encoding Ascii
+git -C .\repo\internal fetch origin
+git -C .\repo\internal show origin/airgap-config:dictionary.json | Set-Content dictionary.json -Encoding Ascii
 ```
 
 ## Hotfix — preferred: out-of-band (ADR-0004)
@@ -149,22 +153,22 @@ If the fix went straight onto `main` (diverging it from the pipeline):
 #    (Skip this entirely and the next round-trip reverts your fix.)
 
 # 3. Normal takeoff + landing so the external fix reaches pre-dev:
-.\landing.cmd                              # from the internal kit root
+.\'2 - landing.cmd'                        # from the internal kit root
 #    then promote pre-dev -> develop -> staging (your normal process)
 
 # 4. Reconcile main once staging has the fix. The kit's local staging/main are
 #    bootstrap-time snapshots - refresh them from the server first (reconcile-main
 #    refuses to run against stale copies):
-git -C .\repo fetch origin
-git -C .\repo branch -f staging origin/staging
-git -C .\repo branch -f main    origin/main
+git -C .\repo\internal fetch origin
+git -C .\repo\internal branch -f staging origin/staging
+git -C .\repo\internal branch -f main    origin/main
 .\engine\reconcile-main.ps1                # dry run - shows what will drop
 #    confirm the fix is in staging, then:
 .\engine\reconcile-main.ps1 -Force
-git -C .\repo push --force origin main
+git -C .\repo\internal push --force origin main
 
 # 5. Verify:
-git -C .\repo diff staging main            # expect empty
+git -C .\repo\internal diff staging main   # expect empty
 ```
 
 (Engine-style with explicit paths: see the "Engine scripts" section — pass `-RepoPath` to

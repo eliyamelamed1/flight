@@ -12,7 +12,7 @@
     external repo is a working clone, refresh it from its origin first (see -Refresh).
 
 .EXAMPLE
-    .\export-bundle.ps1 -RepoPath C:\src\app -Out D:\transfer\app.bundle -Refresh
+    .\export-bundle.ps1 -RepoPath C:\src\app -Out D:\bundles\app.bundle -Refresh
 #>
 [CmdletBinding()]
 param(
@@ -25,10 +25,12 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Invoke-Git {
-    # Local Continue: git writes normal progress to stderr, and with the caller's output
-    # captured (2>&1) PS 5.1 would turn that into a fatal NativeCommandError under the
-    # script-level Stop. We gate on $LASTEXITCODE instead.
-    $ErrorActionPreference = 'Continue'
+    # Local SilentlyContinue: git writes normal progress/status to stderr (e.g. bundle
+    # verify's "...is okay"), and under Continue PS 5.1 paints every such line on the
+    # console as a red NativeCommandError even though it is harmless and captured.
+    # SilentlyContinue suppresses that display; the lines still land in $out via 2>&1,
+    # and real failures are caught by gating on $LASTEXITCODE.
+    $ErrorActionPreference = 'SilentlyContinue'
     $out = git -C $RepoPath @args 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') failed ($LASTEXITCODE)`n$out" }
     return $out

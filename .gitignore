@@ -11,11 +11,11 @@ doneUpload/
 *.bundle
 
 # The REAL dictionary holds internal-specific values and must never reach the toolkit
-# repo (it travels to the external side). Only dictionary.sample.json is committed.
+# repo (it travels to the external side). Landing writes a starter file on first run.
 dictionary.json
 
 # The REAL repos config holds per-kit remote URLs (the internal server URL must never
-# reach the toolkit repo / external side). Only repos.sample.json is committed.
+# reach the toolkit repo / external side). Created by the operator, never committed.
 repos.json
 
 # OS / editor noise

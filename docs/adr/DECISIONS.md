@@ -451,7 +451,8 @@ branch (GitHub's default). The scripts and docs previously named the internal de
 ## ADR-0016 — Two zero-setup wrapper commands (`takeoff` / `landing`) with a folder convention and per-run URL prompt
 
 **Status:** Accepted; **partially superseded by ADR-0019** (the per-run URL prompt is now the
-fallback behind a per-kit `repos.json`, and the wrapper `.ps1` files moved into `engine\`).
+fallback behind a per-kit `repos.json`, and the wrapper `.ps1` files moved into `engine\`);
+launchers renamed to `1 - takeoff.cmd` / `2 - landing.cmd` by **ADR-0022**.
 Adds an operator layer on top of the engine scripts; sync semantics (ADR-0012/0013) unchanged.
 
 **Context:** Operating the toolkit meant retyping three long paths per command and choosing
@@ -509,7 +510,10 @@ with each run asking for the one thing that varies: the repo URL.
 
 ## ADR-0017 — The dictionary lives in the internal kit; only a sample is committed; landing auto-versions it to `airgap-config`
 
-**Status:** Accepted. Refines where the ADR-0012 dictionary is stored and how it survives.
+**Status:** Accepted; **the sample-file half is superseded by ADR-0022** (landing now
+generates a starter `dictionary.json` itself; no sample ships in the kit — the storage,
+backup and restore mechanics below are unchanged). Refines where the ADR-0012 dictionary
+is stored and how it survives.
 
 **Context:** The dictionary is the *entire* internal delta (ADR-0012), yet it was a single
 unversioned file committed to the toolkit with demo content. Two failure modes: refreshing a
@@ -574,7 +578,8 @@ asked for a more familiar, forgiving format.
 
 **Migration note:** no automatic TSV→JSON conversion is provided (the toolkit has no committed
 real dictionaries). An existing `airgap-config` backup holding `dictionary.tsv` is not read by
-the new landing; recreate `dictionary.json` from the sample and it re-versions on the next run.
+the new landing; recreate `dictionary.json` and it re-versions on the next run (the sample
+file was later removed by ADR-0022 — landing now writes the starter itself).
 
 ---
 
@@ -582,10 +587,11 @@ the new landing; recreate `dictionary.json` from the sample and it re-versions o
 
 **Status:** Accepted; **amended by ADR-0020** (the `repos.json` keys are renamed to
 `externalRepoUrl`/`internalRepoUrl`, and the `transfer\` bundle drop is replaced by
-`toUpload\`/`doneUpload\` run folders). Partially supersedes ADR-0016: the per-run URL
-prompt becomes a fallback behind a config file, and the wrapper `.ps1` files move out of
-the kit top level. Sync semantics (ADR-0012/0013) and the dictionary storage model
-(ADR-0017/0018) unchanged.
+`toUpload\`/`doneUpload\` run folders) and by **ADR-0022** (the sample files are removed
+for good and the launchers are renumbered `1 - takeoff.cmd` / `2 - landing.cmd`).
+Partially supersedes ADR-0016: the per-run URL prompt becomes a fallback behind a config
+file, and the wrapper `.ps1` files move out of the kit top level. Sync semantics
+(ADR-0012/0013) and the dictionary storage model (ADR-0017/0018) unchanged.
 
 **Context:** The kit top level had grown to four executables (`takeoff.ps1`/`.cmd`,
 `landing.ps1`/`.cmd`) plus the engine folder, and both commands prompted for their URL on
@@ -678,3 +684,72 @@ by repo and time. The `repos.json` keys `"external"`/`"internal"` also read ambi
 read — takeoff creates `toUpload\` on its next run and landing tells you exactly where
 it expects the folder. Old `repos.json` files with `"external"`/`"internal"` keys read as
 empty (the commands fall back to the prompt); rename the keys.
+
+---
+
+## ADR-0021 — Per-side repos (`repo\external` / `repo\internal`): one kit can run both commands
+
+**Status:** Accepted. Refines the kit convention of ADR-0016/0019. Sync semantics
+(ADR-0012/0013) unchanged.
+
+**Context:** Takeoff and landing both used the same `repo\` folder — takeoff for its bare
+relay clone of the external repo, landing for the internal working repo. On the intended
+two-machine deployment they never met, but running both commands from ONE kit folder (a
+natural thing to do when testing, and exactly what happened in practice) broke immediately:
+landing found takeoff's bare relay clone at `repo\` (non-empty, no `.git`) and refused with
+a misleading "exists but is not a git repo. Remove it and re-run" — and following that
+advice would have destroyed takeoff's relay.
+
+**Decision:**
+- Each command owns its own repo folder under `repo\`: **takeoff → `repo\external`**
+  (bare relay clone), **landing → `repo\internal`** (internal working repo). They no
+  longer share any state except `toUpload\`/`doneUpload\` — which is precisely the
+  handoff, so a single kit now runs the full round trip on one machine.
+- **Auto-migration, once, on the next run:** takeoff recognizes a legacy bare relay
+  directly in `repo\` (top-level `HEAD` + `objects`, no `.git`) and moves it to
+  `repo\external`; landing recognizes a legacy working clone (`repo\.git`) and moves it
+  to `repo\internal`. No operator action, nothing re-cloned.
+- `reconcile-main.ps1` defaults to `repo\internal`, falling back to a legacy `repo\`
+  working clone if `repo\internal` doesn't exist yet.
+
+**Alternatives considered:**
+- Keep the shared `repo\` and just improve the error message ("this kit already ran
+  takeoff — use a second kit copy") — rejected: it documents the trap instead of removing
+  it, and single-machine round-trip testing is genuinely useful.
+- Top-level `repoExternal\` / `repoInternal\` folders — rejected: two more top-level
+  entries in the kit; nesting under `repo\` keeps the operator surface unchanged.
+- Making landing bootstrap into whatever `repo\` contains — rejected outright: takeoff's
+  relay and the internal repo have unrelated history and opposite roles; guessing invites
+  pushing external raw content to the internal server.
+
+---
+
+## ADR-0022 — Numbered launchers; no sample files (generated starter dictionary, hand-created repos.json)
+
+**Status:** Accepted. Renames the ADR-0016 launchers and removes the sample-file
+mechanism of ADR-0017/0019 (their storage/backup semantics are unchanged).
+
+**Context:** The operator renamed the launchers to make the run order self-evident in
+Explorer and removed the two committed sample files as top-level clutter — the kit's
+guided prompts already tell you what to create.
+
+**Decision:**
+- Launchers are **`1 - takeoff.cmd`** and **`2 - landing.cmd`** — the number is the run
+  order of the everyday flow. (Contents unchanged: PowerShell-bypass wrappers around
+  `engine\takeoff.ps1` / `engine\landing.ps1`.)
+- **No sample files ship in the kit.** Instead:
+  - `dictionary.json`: the first landing **writes a starter file itself** (placeholder
+    pair `"find-this-text": "replace-with-this"`, which matches nothing and therefore can
+    never inject wrong content) and stops for the operator to fill in — preserving
+    ADR-0017's guided first run without a second committed file.
+  - `repos.json`: created by hand; the URL prompt's tip prints the exact JSON shape, and
+    the prompt remains a full fallback (ADR-0019 resolution order unchanged).
+- Kit top level is now: the two numbered launchers, `README.md`, and the operator's own
+  gitignored `repos.json` / `dictionary.json`.
+
+**Alternatives considered:**
+- Keep the committed samples — rejected by the operator: two more files at the top level
+  whose content the prompts/starter can convey on demand.
+- Auto-create `repos.json` with empty values like the dictionary starter — rejected: an
+  empty repos.json behaves identically to a missing one (prompt), so the file would be
+  pure noise; the dictionary starter exists because landing must STOP for real pairs.

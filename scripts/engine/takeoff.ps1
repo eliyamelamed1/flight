@@ -1,36 +1,48 @@
 <#
 .SYNOPSIS
-    TAKEOFF (external side, internet). The everyday one-command export: asks for the
-    GitHub repo URL, keeps .\repo as a bare relay clone of it, and writes a full bundle
-    to .\transfer\app.bundle. Carry that file across the air gap and run landing.ps1.
+    TAKEOFF (external side, internet). The everyday one-command export: reads the
+    GitHub repo URL from repos.json (prompting if unset), keeps .\repo as a bare relay
+    clone of it, and writes a full bundle to .\transfer\app.bundle. Carry that file
+    across the air gap and run landing there.
 
 .DESCRIPTION
-    Folder convention - everything lives beside this script (the "kit"):
+    This script lives in engine\; the kit root is one level up (the folder holding
+    takeoff.cmd). Folder convention - everything lives in the kit root:
         repo\                 bare relay clone of the URL (created on first run)
         transfer\app.bundle   the produced bundle (the only thing you carry across)
+        repos.json            per-kit remote URLs - copy repos.sample.json and fill
+                              the "external" key (leave "internal" empty on this side)
 
-    Every run prompts for the repo URL (nothing is stored between runs); the URL you
-    type becomes origin, so the bundle always reflects exactly that repo.
+    The repo URL resolves in this order: -RepoUrl parameter, then repos.json key
+    "external", then an interactive prompt. The URL becomes origin, so the bundle
+    always reflects exactly that repo.
 
     The relay clone is bare with a heads-mirroring fetch refspec, so every run's
     refresh updates branch tips in place - the bundle is always as fresh as the server.
 
 .EXAMPLE
-    .\takeoff.ps1
-    #   GitHub repo URL: https://github.com/org/app.git
+    .\takeoff.cmd
+    #   Using external repo URL from repos.json: https://github.com/org/app.git
 #>
 [CmdletBinding()]
 param(
-    # Skips the interactive prompt (automation/tests); interactive runs always ask.
+    # Overrides repos.json and the prompt (automation/tests).
     [string]$RepoUrl
 )
 
 # Continue (not Stop): git clone/fetch write normal progress to stderr, which PS 5.1
 # can turn into a fatal NativeCommandError under Stop. We gate on $LASTEXITCODE instead.
 $ErrorActionPreference = 'Continue'
-$here   = $PSScriptRoot
-$repo   = Join-Path $here 'repo'
-$bundle = Join-Path $here 'transfer\app.bundle'
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "git was not found on PATH. Install Git for Windows (https://git-scm.com/download/win), reopen this terminal, and re-run."
+}
+
+# This script lives in engine\ - the kit root (repo\, transfer\, repos.json) is one level up.
+$here      = Split-Path -Parent $PSScriptRoot
+$repo      = Join-Path $here 'repo'
+$bundle    = Join-Path $here 'transfer\app.bundle'
+$reposFile = Join-Path $here 'repos.json'
 
 function Invoke-Git {
     $out = git @args 2>&1
@@ -38,12 +50,26 @@ function Invoke-Git {
     return $out
 }
 
+if (-not $RepoUrl -and (Test-Path $reposFile)) {
+    # Config is a convenience: bad JSON or an empty/missing key just falls through to
+    # the prompt, exactly as if the file were not there.
+    $cfg = $null
+    try   { $cfg = Get-Content $reposFile -Raw | ConvertFrom-Json }
+    catch { Write-Warning "repos.json is not valid JSON - ignoring it and prompting instead." }
+    if ($cfg -and "$($cfg.external)".Trim()) {
+        $RepoUrl = "$($cfg.external)".Trim()
+        Write-Host "Using external repo URL from repos.json: $RepoUrl"
+    }
+}
+
+$prompted = $false
 while (-not $RepoUrl) {
     # try/catch: under a non-interactive host Read-Host raises a NON-terminating error,
     # which would spin this loop forever - fail cleanly instead.
-    try { $RepoUrl = (Read-Host 'GitHub repo URL (e.g. https://github.com/org/app.git)').Trim() }
-    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url>." }
+    try { $RepoUrl = (Read-Host 'GitHub repo URL (e.g. https://github.com/org/app.git)').Trim(); $prompted = $true }
+    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""external"" key in repos.json." }
 }
+if ($prompted) { Write-Host "Tip: put this URL in repos.json (""external"" key, copy repos.sample.json) to skip this prompt." }
 
 # A repo either has a .git dir (working clone) or is bare (HEAD + objects at top level).
 $isRepo = (Test-Path (Join-Path $repo '.git')) -or
@@ -83,8 +109,8 @@ if ($isRepo) {
     Set-RelayRefspecs
 }
 
-& (Join-Path $here 'export-bundle.ps1') -RepoPath $repo -Out $bundle -Refresh
+& (Join-Path $PSScriptRoot 'export-bundle.ps1') -RepoPath $repo -Out $bundle -Refresh
 
 Write-Host ""
 Write-Host "Takeoff complete. Carry transfer\app.bundle to the internal kit's transfer\ folder"
-Write-Host "and run landing.ps1 there."
+Write-Host "and run landing there."

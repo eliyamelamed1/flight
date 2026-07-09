@@ -10,8 +10,12 @@ transfer/
 *.bundle
 
 # The REAL dictionary holds internal-specific values and must never reach the toolkit
-# repo (it travels to the external side). Only dictionary.sample.tsv is committed.
-dictionary.tsv
+# repo (it travels to the external side). Only dictionary.sample.json is committed.
+dictionary.json
+
+# The REAL repos config holds per-kit remote URLs (the internal server URL must never
+# reach the toolkit repo / external side). Only repos.sample.json is committed.
+repos.json
 
 # OS / editor noise
 Thumbs.db

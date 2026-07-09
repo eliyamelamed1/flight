@@ -450,8 +450,9 @@ branch (GitHub's default). The scripts and docs previously named the internal de
 
 ## ADR-0016 — Two zero-setup wrapper commands (`takeoff` / `landing`) with a folder convention and per-run URL prompt
 
-**Status:** Accepted. Adds an operator layer on top of the engine scripts; sync semantics
-(ADR-0012/0013) unchanged.
+**Status:** Accepted; **partially superseded by ADR-0019** (the per-run URL prompt is now the
+fallback behind a per-kit `repos.json`, and the wrapper `.ps1` files moved into `engine\`).
+Adds an operator layer on top of the engine scripts; sync semantics (ADR-0012/0013) unchanged.
 
 **Context:** Operating the toolkit meant retyping three long paths per command and choosing
 the right script (bootstrap vs sync) by hand. The operator wants one command per side
@@ -477,8 +478,9 @@ with each run asking for the one thing that varies: the repo URL.
   the kit's `repo\`.
 
 **Alternatives considered:**
-- Config file with saved paths/URLs — rejected: the operator explicitly prefers being asked
-  each run over hidden stored state.
+- Config file with saved paths/URLs — rejected at the time: the operator explicitly preferred
+  being asked each run over hidden stored state. (Reversed for URLs by ADR-0019 once the URLs
+  stabilized and the prompt became pure friction.)
 - Wrapper args with defaults — rejected: still paths to remember; the folder convention
   removes them entirely.
 - Mirror clone (`--mirror`) for the relay — rejected: also drags `refs/pull/*` etc. from
@@ -537,3 +539,90 @@ toolkit would carry internal naming to the external network — the wrong side o
 - Dedicated config repo on the internal server — rejected: a second repo, a second URL and
   extra ceremony for a one-file concern.
 - Storing it inside the synced repo — impossible: wiped by every sync (`read-tree --reset`).
+
+---
+
+## ADR-0018 — The dictionary is a JSON object, not tab-separated values
+
+**Status:** Accepted. Supersedes the TSV file format described in ADR-0012 and ADR-0017 (the
+storage/backup mechanics of ADR-0017 are unchanged — only the on-disk format and filename
+change: `dictionary.tsv` → `dictionary.json`, `dictionary.sample.tsv` → `dictionary.sample.json`).
+
+**Context:** The dictionary was a tab-separated file (`from<TAB>to`, one pair per line). Hand-
+editing TSV is a known trap: editors silently convert tabs to spaces, and a single wrong
+character produced a "Malformed dictionary line" failure with no structural validation. Operators
+asked for a more familiar, forgiving format.
+
+**Decision:**
+- The dictionary is a JSON **object** whose keys are the text to find and whose values are the
+  replacements: `{ "eliya": "dori" }`. Keys are unique by construction (no duplicate find-string).
+- `sync-from-bundle.ps1` loads it with `ConvertFrom-Json`, iterates the object's properties into
+  `from`/`to` pairs, then applies them longest-`from`-first exactly as before (so nested keys like
+  `eliya` vs `eliyahu` still resolve deterministically). Invalid JSON, a top-level array, or an
+  empty object each fail fast with a clear message.
+- Everything else is unchanged: literal (non-regex) replacement on text files only, per-key
+  match counts, zero-match warnings (`-Strict` to fail), UTF-8 no-BOM writes, and the
+  `airgap-config` backup/restore flow (now versioning `dictionary.json`).
+
+**Alternatives considered:**
+- Keep TSV — rejected: the tab-vs-space editing trap is exactly the friction this removes.
+- JSON array of `{from,to}` objects — rejected: more verbose to hand-edit, and ordering is
+  irrelevant because the transform sorts by `from` length regardless.
+- JSON with comments (JSONC) to preserve the old inline guidance — rejected: needs a
+  comment-stripping pass and invites invalid-JSON mistakes; the "keep keys precise" guidance
+  lives in the READMEs and RUNBOOK instead.
+
+**Migration note:** no automatic TSV→JSON conversion is provided (the toolkit has no committed
+real dictionaries). An existing `airgap-config` backup holding `dictionary.tsv` is not read by
+the new landing; recreate `dictionary.json` from the sample and it re-versions on the next run.
+
+---
+
+## ADR-0019 — Launchers-only kit top level; per-kit remote URLs in a gitignored `repos.json`
+
+**Status:** Accepted. Partially supersedes ADR-0016: the per-run URL prompt becomes a
+fallback behind a config file, and the wrapper `.ps1` files move out of the kit top level.
+Sync semantics (ADR-0012/0013) and the dictionary storage model (ADR-0017/0018) unchanged.
+
+**Context:** The kit top level had grown to four executables (`takeoff.ps1`/`.cmd`,
+`landing.ps1`/`.cmd`) plus the engine folder, and both commands prompted for their URL on
+every run. The operator wants the kit surface reduced to exactly what they touch — two
+commands, the dictionary, a config file for the repo URLs, and the README — and the URLs,
+now stable, stored instead of retyped (reversing the ADR-0016 per-run-prompt trade-off,
+which predated stable URLs).
+
+**Decision:**
+- **Top level = operator surface only:** `takeoff.cmd`, `landing.cmd`, `repos.sample.json`,
+  `dictionary.sample.json`, `README.md` (plus the gitignored per-kit `repos.json` /
+  `dictionary.json` and runtime `repo\` / `transfer\`). ALL PowerShell — including
+  `takeoff.ps1` / `landing.ps1` — lives in `engine\`; the `.cmd` launchers invoke
+  `engine\takeoff.ps1` / `engine\landing.ps1`.
+- **Kit root = parent of `engine\`:** the wrappers anchor with
+  `$here = Split-Path -Parent $PSScriptRoot`; `reconcile-main.ps1`'s existing `..\repo`
+  default already assumed this layout.
+- **`repos.json`** (per-kit, gitignored — same sample/real split as the dictionary,
+  ADR-0017): `{ "external": "<takeoff URL>", "internal": "<landing URL>" }`. Resolution
+  order per command: `-RepoUrl` parameter → its `repos.json` key (non-empty, trimmed) →
+  interactive prompt (ADR-0016 behavior, now the degraded mode). Invalid JSON warns and
+  falls through to the prompt — the config is a convenience, never a failure point.
+- The committed **sample ships empty values** (`""`), so an unedited copy behaves exactly
+  like a missing file (prompt) — placeholder URLs can never be executed.
+- **No auto-copy of the sample and no auto-save of prompted answers:** unlike the
+  dictionary (which must stop the run — placeholder pairs would corrupt content), the
+  prompt is a perfectly good degraded mode, and writing config as a prompt side effect is
+  hidden stored state. A post-prompt tip tells the operator the file exists.
+- **`repos.json` is NOT backed up to `airgap-config`:** you need the internal URL to reach
+  the backup branch at all (chicken-and-egg), so the backup has no recovery value; the
+  prompt is the recovery path. Operators fill **only their side's key** — the internal URL
+  must not travel to the internet-side kit (same leak concern as ADR-0017).
+
+**Alternatives considered:**
+- Engine outside `scripts/` (repo root) — rejected: the kit must stay one copyable folder.
+- Keep `.ps1` at top level and drop `.cmd` — rejected: double-click launch with
+  `-ExecutionPolicy Bypass` is the locked-down-host path in (ADR-0016).
+- Auto-saving the prompted URL into `repos.json` — rejected: prompt side effects are hidden
+  state, `-RepoUrl` overrides must not persist, and a script that writes the JSON it then
+  parses adds a failure class for no real gain.
+
+**Migration note:** a deployed kit refreshed by copy-over keeps its old top-level
+`takeoff.ps1`/`landing.ps1` (stale but runnable) — delete them; the kit README says so.

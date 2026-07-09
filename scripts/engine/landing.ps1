@@ -3,39 +3,52 @@
     LANDING (internal side, air-gapped). The everyday one-command import: takes the
     bundle from .\transfer\app.bundle, bootstraps the internal repo on first run
     (clone + first sync + promotion branches) or advances pre-dev on later runs,
-    then pushes to the internal git server URL you type.
+    then pushes to the internal git server URL from repos.json (prompting if unset).
 
 .DESCRIPTION
-    Folder convention - everything lives beside this script (the "kit"):
+    This script lives in engine\; the kit root is one level up (the folder holding
+    landing.cmd). Folder convention - everything lives in the kit root:
         transfer\app.bundle   drop the bundle from takeoff here
         repo\                 the internal repo (created automatically on first run)
-        dictionary.tsv        your from<TAB>to transform pairs - create it ONCE from
-                              dictionary.sample.tsv, then edit freely. Every run backs
+        dictionary.json       your "find": "replace" transform pairs - create it ONCE from
+                              dictionary.sample.json, then edit freely. Every run backs
                               it up to the server's 'airgap-config' branch, and a kit
                               that lost it restores the backup automatically.
+        repos.json            per-kit remote URLs - copy repos.sample.json and fill
+                              the "internal" key (leave "external" empty on this side)
 
-    Every run prompts for the internal repo URL (nothing is stored between runs); it
-    becomes origin and receives the synced branches:
+    The internal repo URL resolves in this order: -RepoUrl parameter, then repos.json
+    key "internal", then an interactive prompt. It becomes origin and receives the
+    synced branches:
         first run : pre-dev, develop, staging, main   (seeds the internal server)
         later runs: pre-dev only                      (promotion moves the rest up)
 
 .EXAMPLE
-    .\landing.ps1
-    #   Internal repo URL: https://git.internal.local/team/app.git
+    .\landing.cmd
+    #   Using internal repo URL from repos.json: https://git.internal.local/team/app.git
 #>
 [CmdletBinding()]
 param(
-    # Skips the interactive prompt (automation/tests); interactive runs always ask.
+    # Overrides repos.json and the prompt (automation/tests).
     [string]$RepoUrl
 )
 
 # Continue (not Stop): same rationale as bootstrap-internal.ps1 - git writes progress
 # to stderr, which PS 5.1 can turn fatal under Stop. We gate on $LASTEXITCODE instead.
 $ErrorActionPreference = 'Continue'
-$here   = $PSScriptRoot
-$repo   = Join-Path $here 'repo'
-$bundle = Join-Path $here 'transfer\app.bundle'
-$dict   = Join-Path $here 'dictionary.tsv'
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "git was not found on PATH. Install Git for Windows (https://git-scm.com/download/win), reopen this terminal, and re-run."
+}
+
+# This script lives in engine\ - the kit root (repo\, transfer\, the dictionary and
+# repos.json) is one level up.
+$here      = Split-Path -Parent $PSScriptRoot
+$repo      = Join-Path $here 'repo'
+$bundle    = Join-Path $here 'transfer\app.bundle'
+$dict      = Join-Path $here 'dictionary.json'
+$sample    = Join-Path $here 'dictionary.sample.json'
+$reposFile = Join-Path $here 'repos.json'
 
 function Invoke-Git {
     $out = git @args 2>&1
@@ -44,10 +57,25 @@ function Invoke-Git {
 }
 
 if (-not (Test-Path $bundle)) { throw "No bundle at $bundle - copy app.bundle from the takeoff kit into transfer\ and re-run." }
-$dictHelp = "No dictionary at $dict - copy dictionary.sample.tsv to dictionary.tsv (same folder) and edit in your real from<TAB>to pairs."
+$dictHelp = "No dictionary at $dict - copy dictionary.sample.json to dictionary.json (same folder) and edit in your real ""find"": ""replace"" pairs."
+
+function Initialize-Dictionary {
+    # Returns $true when dictionary.json is ready to use. If it is missing, create it from the
+    # committed sample and return $false so the caller STOPS - the operator fills in their real
+    # pairs before the first sync, so the sample's placeholder values are never injected.
+    # Throws only if even the sample is gone.
+    if (Test-Path $dict) { return $true }
+    if (Test-Path $sample) {
+        Copy-Item $sample $dict
+        Write-Host "Created dictionary.json from the sample. Open it, replace the sample pairs with"
+        Write-Host "your real ""find"": ""replace"" pairs, then re-run landing."
+        return $false
+    }
+    throw $dictHelp
+}
 
 function Backup-Dictionary {
-    # Version dictionary.tsv onto the orphan 'airgap-config' branch so the internal
+    # Version dictionary.json onto the orphan 'airgap-config' branch so the internal
     # server keeps its history (a kit that lost the file restores it automatically).
     # Plumbing only - temp index, no stdin pipes (PS 5.1 BOM-taints piped text):
     # no working-tree churn, no effect on the sync branches.
@@ -71,7 +99,7 @@ function Backup-Dictionary {
     $tmpIndex = Join-Path $env:TEMP ('airgap-config-index-' + [System.IO.Path]::GetRandomFileName())
     try {
         $env:GIT_INDEX_FILE = $tmpIndex
-        git -C $repo update-index --add --cacheinfo "100644,$blob,dictionary.tsv" 2>&1 | Out-Null
+        git -C $repo update-index --add --cacheinfo "100644,$blob,dictionary.json" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Warning "dictionary backup skipped: update-index failed"; return $false }
         $tree = Get-Sha (git -C $repo write-tree 2>&1)
     } finally {
@@ -87,12 +115,26 @@ function Backup-Dictionary {
     return ($LASTEXITCODE -eq 0)
 }
 
+if (-not $RepoUrl -and (Test-Path $reposFile)) {
+    # Config is a convenience: bad JSON or an empty/missing key just falls through to
+    # the prompt, exactly as if the file were not there.
+    $cfg = $null
+    try   { $cfg = Get-Content $reposFile -Raw | ConvertFrom-Json }
+    catch { Write-Warning "repos.json is not valid JSON - ignoring it and prompting instead." }
+    if ($cfg -and "$($cfg.internal)".Trim()) {
+        $RepoUrl = "$($cfg.internal)".Trim()
+        Write-Host "Using internal repo URL from repos.json: $RepoUrl"
+    }
+}
+
+$prompted = $false
 while (-not $RepoUrl) {
     # try/catch: under a non-interactive host Read-Host raises a NON-terminating error,
     # which would spin this loop forever - fail cleanly instead.
-    try { $RepoUrl = (Read-Host 'Internal repo URL (git server this kit pushes to)').Trim() }
-    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url>." }
+    try { $RepoUrl = (Read-Host 'Internal repo URL (git server this kit pushes to)').Trim(); $prompted = $true }
+    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""internal"" key in repos.json." }
 }
+if ($prompted) { Write-Host "Tip: put this URL in repos.json (""internal"" key, copy repos.sample.json) to skip this prompt." }
 
 $firstRun = -not (Test-Path (Join-Path $repo '.git'))
 if ($firstRun) {
@@ -110,10 +152,10 @@ if ($firstRun) {
                "    git -C `"$repo`" switch pre-dev`n" +
                "then re-run landing.")
     }
-    if (-not (Test-Path $dict)) { throw $dictHelp }
+    if (-not (Initialize-Dictionary)) { return }
     Write-Host "No internal repo yet -> first-run bootstrap (clone + first sync + promotion branches)."
     try {
-        & (Join-Path $here 'bootstrap-internal.ps1') -RepoPath $repo -Bundle $bundle -Dictionary $dict
+        & (Join-Path $PSScriptRoot 'bootstrap-internal.ps1') -RepoPath $repo -Bundle $bundle -Dictionary $dict
     } catch {
         # A partial clone would masquerade as steady state on the next run; it is fully
         # reproducible from the bundle, so drop it and let the next run bootstrap again.
@@ -134,15 +176,15 @@ if ($firstRun) {
         # Self-heal: every landing backs the dictionary up to the server's airgap-config
         # branch - restore the last backed-up copy instead of failing.
         git -C $repo fetch origin 2>&1 | Out-Null
-        $restored = git -C $repo show refs/remotes/origin/airgap-config:dictionary.tsv 2>&1
+        $restored = git -C $repo show refs/remotes/origin/airgap-config:dictionary.json 2>&1
         if ($LASTEXITCODE -eq 0) {
             [System.IO.File]::WriteAllText($dict, (($restored -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
-            Write-Host "dictionary.tsv was missing - restored the last backed-up copy from origin/airgap-config."
+            Write-Host "dictionary.json was missing - restored the last backed-up copy from origin/airgap-config."
         }
     }
-    if (-not (Test-Path $dict)) { throw $dictHelp }
+    if (-not (Initialize-Dictionary)) { return }
     Write-Host "Internal repo found -> steady-state sync (advance pre-dev)."
-    & (Join-Path $here 'sync-from-bundle.ps1') -RepoPath $repo -Bundle $bundle -Dictionary $dict
+    & (Join-Path $PSScriptRoot 'sync-from-bundle.ps1') -RepoPath $repo -Bundle $bundle -Dictionary $dict
 }
 
 # Point origin at the URL you typed (the bundle clone leaves origin = the bundle file).

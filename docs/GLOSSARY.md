@@ -2,19 +2,24 @@
 
 - **Air gap** — Physical/network isolation; the two repos can never talk directly. All
   transfer happens via files (git bundles) carried across.
-- **Kit** — The folder a wrapper script lives in (a copy of `scripts/`). Everything the
-  wrappers need sits beside them by convention: `repo\` (the git repo), `transfer\`
-  (the bundle), and on the internal side `dictionary.tsv` — created once from
-  `dictionary.sample.tsv` (ADR-0016/0017).
+- **Kit** — A copy of `scripts/` on one side of the gap. Only the launchers and config
+  sit at the top (ADR-0019): `takeoff.cmd` / `landing.cmd`, `repos.json` (from
+  `repos.sample.json`), and on the internal side `dictionary.json` (from
+  `dictionary.sample.json`, ADR-0016/0017). Runtime assets sit beside them by convention
+  (`repo\` = the git repo, `transfer\` = the bundle); all the PowerShell lives in `engine\`.
 - **`airgap-config`** — Orphan branch on the internal server where landing automatically
-  versions `dictionary.tsv` each run; the restore source when a kit loses its dictionary
+  versions `dictionary.json` each run; the restore source when a kit loses its dictionary
   (ADR-0017).
-- **Takeoff** — The external-side everyday command (`takeoff.ps1`): prompts for the GitHub
-  repo URL, refreshes the kit's `repo\` (a bare relay clone), and writes
-  `transfer\app.bundle` for carrying across the gap.
-- **Landing** — The internal-side everyday command (`landing.ps1`): prompts for the internal
-  server URL, consumes `transfer\app.bundle` (first run bootstraps, later runs advance
-  `pre-dev`), and pushes the result to that URL.
+- **Takeoff** — The external-side everyday command (`takeoff.cmd` → `engine\takeoff.ps1`):
+  reads the GitHub repo URL from `repos.json` (prompting if unset), refreshes the kit's
+  `repo\` (a bare relay clone), and writes `transfer\app.bundle` for carrying across the gap.
+- **Landing** — The internal-side everyday command (`landing.cmd` → `engine\landing.ps1`):
+  reads the internal server URL from `repos.json` (prompting if unset), consumes
+  `transfer\app.bundle` (first run bootstraps, later runs advance `pre-dev`), and pushes
+  the result to that URL.
+- **`repos.json`** — Per-kit remote URLs (`"external"` for takeoff, `"internal"` for
+  landing); created once from the committed `repos.sample.json` and gitignored. An empty
+  or missing key falls back to a prompt; `-RepoUrl` overrides both (ADR-0019).
 - **External repo** — The internet-side repository. Absolute source of truth for
   application code.
 - **Internal repo** — The air-gapped repository. Holds application code plus internal-only

@@ -18,18 +18,18 @@
     being dropped is your temporary hotfix.
 
 .EXAMPLE
-    # From the internal kit (defaults to the repo\ folder beside this script):
-    .\reconcile-main.ps1           # dry run - review the diff first
-    .\reconcile-main.ps1 -Force    # then actually do it
+    # From the internal kit (defaults to the kit's repo\ folder, one level up from engine\):
+    .\engine\reconcile-main.ps1           # dry run - review the diff first
+    .\engine\reconcile-main.ps1 -Force    # then actually do it
 
 .EXAMPLE
     # Explicit repo path (engine-style invocation):
-    .\reconcile-main.ps1 -RepoPath C:\src\app-internal
-    .\reconcile-main.ps1 -RepoPath C:\src\app-internal -Force
+    .\engine\reconcile-main.ps1 -RepoPath C:\src\app-internal
+    .\engine\reconcile-main.ps1 -RepoPath C:\src\app-internal -Force
 #>
 [CmdletBinding()]
 param(
-    # Defaults to the kit convention: the repo\ folder beside this script.
+    # Defaults to the kit convention: the kit's repo\ folder (one level up from engine\).
     [string]$RepoPath,
     [string]$MainBranch    = 'main',
     [string]$StagingBranch = 'staging',
@@ -38,7 +38,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $RepoPath) { $RepoPath = Join-Path $PSScriptRoot 'repo' }
+# This script lives in the kit's engine\ subfolder; the kit's repo\ is one level up.
+if (-not $RepoPath) { $RepoPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'repo' }
 function Invoke-Git {
     # Local Continue: git writes normal progress to stderr, and with the caller's output
     # captured (2>&1) PS 5.1 would turn that into a fatal NativeCommandError under the

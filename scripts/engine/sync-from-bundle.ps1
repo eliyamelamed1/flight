@@ -25,7 +25,7 @@
 
 .EXAMPLE
     .\sync-from-bundle.ps1 -RepoPath C:\src\app-internal -Bundle D:\transfer\app.bundle `
-        -Dictionary C:\tools\airgap\dictionary.tsv
+        -Dictionary C:\tools\airgap\dictionary.json
 #>
 [CmdletBinding()]
 param(
@@ -57,14 +57,14 @@ if (-not (Test-Path $Dictionary))                  { throw "Dictionary not found
 $status = Invoke-Git status --porcelain
 if ($status) { throw "Working tree is not clean. Commit/stash before syncing.`n$status" }
 
-# --- Load dictionary (from<TAB>to), longest 'from' first ---
+# --- Load dictionary (JSON object of "find": "replace" pairs), longest 'from' first ---
+try { $map = (Get-Content $Dictionary -Raw) | ConvertFrom-Json }
+catch { throw "Dictionary is not valid JSON ($Dictionary): $($_.Exception.Message)" }
+if ($map -is [Array]) { throw "Dictionary must be a JSON object of ""find"": ""replace"" pairs, not an array: $Dictionary" }
+if ($null -eq $map)   { throw "Dictionary is empty: $Dictionary" }
 $pairs = @()
-foreach ($line in (Get-Content $Dictionary)) {
-    $t = $line.Trim()
-    if (-not $t -or $t.StartsWith('#')) { continue }
-    $i = $line.IndexOf("`t")
-    if ($i -lt 1) { throw "Malformed dictionary line (need <from>TAB<to>): $line" }
-    $pairs += [pscustomobject]@{ From = $line.Substring(0,$i); To = $line.Substring($i+1) }
+foreach ($prop in $map.PSObject.Properties) {
+    $pairs += [pscustomobject]@{ From = $prop.Name; To = [string]$prop.Value }
 }
 if (-not $pairs) { throw "Dictionary is empty: $Dictionary" }
 $pairs = $pairs | Sort-Object { $_.From.Length } -Descending

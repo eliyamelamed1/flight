@@ -5,7 +5,7 @@
 
 .EXAMPLE
     .\bootstrap-internal.ps1 -RepoPath C:\src\app-internal -Bundle D:\transfer\app.bundle `
-        -Dictionary C:\tools\airgap\dictionary.tsv
+        -Dictionary C:\tools\airgap\dictionary.json
 #>
 [CmdletBinding()]
 param(

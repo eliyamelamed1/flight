@@ -87,4 +87,6 @@ paths / advanced use; you don't touch them in the everyday flow):
 
 ## Platform
 
-Windows / PowerShell 5.1. Requires `git` on `PATH`. Validated end-to-end against real git.
+Windows / PowerShell 5.1. Requires `git` on `PATH`. Validated end-to-end against real git:
+run `.\tests\test-kit.ps1` — a fully local suite (path remotes, no network) covering the
+whole flow and every refusal/fallback path.

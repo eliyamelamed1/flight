@@ -36,7 +36,8 @@ external kit\                                internal kit\
 ├─ repos.json   ← yours (from sample)        ├─ repos.json   ← yours (from sample)
 ├─ repos.sample.json     template            ├─ repos.sample.json    template
 ├─ repo\        bare relay clone (auto)      ├─ repo\        internal repo (auto on 1st run)
-├─ transfer\    app.bundle written here      ├─ transfer\    drop app.bundle here
+├─ toUpload\<repo>-<ts>\app.bundle           ├─ toUpload\<name>\     drop the takeoff folder here
+│               one folder per takeoff run   ├─ doneUpload\<name>\   moved here after a good push
 └─ engine\      takeoff.ps1,                 ├─ dictionary.json      ← yours (from sample)
                 export-bundle.ps1            ├─ dictionary.sample.json template
                                              └─ engine\      landing.ps1 + bootstrap/sync/
@@ -48,10 +49,18 @@ Only the `.cmd` launchers and the sample/config files sit at the top of the kit 
 which you never run directly in the everyday flow.
 
 Each command resolves its one URL as: `-RepoUrl` parameter → `repos.json` (takeoff reads
-`"external"` = the GitHub repo it bundles from; landing reads `"internal"` = the server it
-pushes to) → interactive prompt. Copy `repos.sample.json` → `repos.json` and fill only
-your side's key; `repos.json` is gitignored, like the dictionary.
-`repo\` and `transfer\` are runtime assets — gitignored, never committed to this toolkit.
+`"externalRepoUrl"` = the GitHub repo it bundles from; landing reads `"internalRepoUrl"` =
+the server it pushes to) → interactive prompt. Copy `repos.sample.json` → `repos.json` and
+fill only your side's key; `repos.json` is gitignored, like the dictionary.
+
+**Bundle handoff (ADR-0020):** each takeoff writes into a fresh
+`toUpload\<repo>-<yyyy-MM-dd_HH-mm-ss>\` folder; you carry that folder into the internal
+kit's `toUpload\`. Landing takes exactly ONE pending folder per run (it refuses if several
+are pending — land them one at a time, oldest first) and moves it to `doneUpload\` only
+after the push to the internal server succeeded, so `toUpload\` = still to land,
+`doneUpload\` = landed history.
+`repo\`, `toUpload\` and `doneUpload\` are runtime assets — gitignored, never committed to
+this toolkit.
 
 ---
 
@@ -61,16 +70,17 @@ Run from the kit root:
 
 ```powershell
 # 1. EXTERNAL kit
-.\takeoff.cmd                 # URL from repos.json "external" (prompts if unset)
-                              # -> refreshes repo\ -> writes transfer\app.bundle
+.\takeoff.cmd                 # URL from repos.json "externalRepoUrl" (prompts if unset)
+                              # -> refreshes repo\ -> writes toUpload\<repo>-<timestamp>\app.bundle
 
-# 2. Carry transfer\app.bundle across the air gap into the internal kit's transfer\
+# 2. Carry that toUpload\<name> folder across the air gap into the internal kit's toUpload\
 
 # 3. INTERNAL kit
-.\landing.cmd                 # URL from repos.json "internal" (prompts if unset)
+.\landing.cmd                 # URL from repos.json "internalRepoUrl" (prompts if unset)
                               # first run : bootstrap (clone + first sync + create branches),
                               #             pushes pre-dev/develop/staging/main
                               # later runs: advance pre-dev only, push pre-dev
+                              # then moves toUpload\<name> -> doneUpload\<name>
 
 # 4. Promote pre-dev up your pipeline (PR/CI): pre-dev -> develop -> staging -> main
 ```

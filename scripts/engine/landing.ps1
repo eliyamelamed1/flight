@@ -1,25 +1,30 @@
 <#
 .SYNOPSIS
     LANDING (internal side, air-gapped). The everyday one-command import: takes the
-    bundle from .\transfer\app.bundle, bootstraps the internal repo on first run
+    bundle folder from .\toUpload\, bootstraps the internal repo on first run
     (clone + first sync + promotion branches) or advances pre-dev on later runs,
-    then pushes to the internal git server URL from repos.json (prompting if unset).
+    pushes to the internal git server URL from repos.json (prompting if unset), and
+    moves the landed bundle folder to .\doneUpload\ once the push succeeded.
 
 .DESCRIPTION
     This script lives in engine\; the kit root is one level up (the folder holding
     landing.cmd). Folder convention - everything lives in the kit root:
-        transfer\app.bundle   drop the bundle from takeoff here
+        toUpload\<name>\      drop the folder produced by takeoff here (exactly one
+                              pending folder per run - landing refuses if it finds more)
+        doneUpload\<name>\    where the folder is moved after a SUCCESSFUL push - the
+                              record of what has already been landed
         repo\                 the internal repo (created automatically on first run)
         dictionary.json       your "find": "replace" transform pairs - create it ONCE from
                               dictionary.sample.json, then edit freely. Every run backs
                               it up to the server's 'airgap-config' branch, and a kit
                               that lost it restores the backup automatically.
         repos.json            per-kit remote URLs - copy repos.sample.json and fill
-                              the "internal" key (leave "external" empty on this side)
+                              the "internalRepoUrl" key (leave "externalRepoUrl" empty
+                              on this side)
 
     The internal repo URL resolves in this order: -RepoUrl parameter, then repos.json
-    key "internal", then an interactive prompt. It becomes origin and receives the
-    synced branches:
+    key "internalRepoUrl", then an interactive prompt. It becomes origin and receives
+    the synced branches:
         first run : pre-dev, develop, staging, main   (seeds the internal server)
         later runs: pre-dev only                      (promotion moves the rest up)
 
@@ -41,14 +46,15 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw "git was not found on PATH. Install Git for Windows (https://git-scm.com/download/win), reopen this terminal, and re-run."
 }
 
-# This script lives in engine\ - the kit root (repo\, transfer\, the dictionary and
+# This script lives in engine\ - the kit root (repo\, toUpload\, the dictionary and
 # repos.json) is one level up.
-$here      = Split-Path -Parent $PSScriptRoot
-$repo      = Join-Path $here 'repo'
-$bundle    = Join-Path $here 'transfer\app.bundle'
-$dict      = Join-Path $here 'dictionary.json'
-$sample    = Join-Path $here 'dictionary.sample.json'
-$reposFile = Join-Path $here 'repos.json'
+$here       = Split-Path -Parent $PSScriptRoot
+$repo       = Join-Path $here 'repo'
+$toUpload   = Join-Path $here 'toUpload'
+$doneUpload = Join-Path $here 'doneUpload'
+$dict       = Join-Path $here 'dictionary.json'
+$sample     = Join-Path $here 'dictionary.sample.json'
+$reposFile  = Join-Path $here 'repos.json'
 
 function Invoke-Git {
     $out = git @args 2>&1
@@ -56,7 +62,17 @@ function Invoke-Git {
     return $out
 }
 
-if (-not (Test-Path $bundle)) { throw "No bundle at $bundle - copy app.bundle from the takeoff kit into transfer\ and re-run." }
+# Exactly ONE pending bundle folder in toUpload\ per run: none -> nothing to land;
+# more than one -> refuse (the operator decides the order) rather than guess.
+$pending = @(if (Test-Path $toUpload) { Get-ChildItem $toUpload -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'app.bundle') } })
+if ($pending.Count -eq 0) { throw "No bundle folder in $toUpload - copy the toUpload\<name> folder produced by takeoff into this kit's toUpload\ and re-run." }
+if ($pending.Count -gt 1) {
+    throw ("toUpload\ holds $($pending.Count) bundle folders but landing processes exactly one per run. " +
+           "Keep the one to land and move the others out of toUpload\ first:`n  " + (($pending | ForEach-Object { $_.Name }) -join "`n  "))
+}
+$bundleFolder = $pending[0]
+$bundle = Join-Path $bundleFolder.FullName 'app.bundle'
+Write-Host "Landing bundle: toUpload\$($bundleFolder.Name)"
 $dictHelp = "No dictionary at $dict - copy dictionary.sample.json to dictionary.json (same folder) and edit in your real ""find"": ""replace"" pairs."
 
 function Initialize-Dictionary {
@@ -121,8 +137,8 @@ if (-not $RepoUrl -and (Test-Path $reposFile)) {
     $cfg = $null
     try   { $cfg = Get-Content $reposFile -Raw | ConvertFrom-Json }
     catch { Write-Warning "repos.json is not valid JSON - ignoring it and prompting instead." }
-    if ($cfg -and "$($cfg.internal)".Trim()) {
-        $RepoUrl = "$($cfg.internal)".Trim()
+    if ($cfg -and "$($cfg.internalRepoUrl)".Trim()) {
+        $RepoUrl = "$($cfg.internalRepoUrl)".Trim()
         Write-Host "Using internal repo URL from repos.json: $RepoUrl"
     }
 }
@@ -132,9 +148,9 @@ while (-not $RepoUrl) {
     # try/catch: under a non-interactive host Read-Host raises a NON-terminating error,
     # which would spin this loop forever - fail cleanly instead.
     try { $RepoUrl = (Read-Host 'Internal repo URL (git server this kit pushes to)').Trim(); $prompted = $true }
-    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""internal"" key in repos.json." }
+    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""internalRepoUrl"" key in repos.json." }
 }
-if ($prompted) { Write-Host "Tip: put this URL in repos.json (""internal"" key, copy repos.sample.json) to skip this prompt." }
+if ($prompted) { Write-Host "Tip: put this URL in repos.json (""internalRepoUrl"" key, copy repos.sample.json) to skip this prompt." }
 
 $firstRun = -not (Test-Path (Join-Path $repo '.git'))
 if ($firstRun) {
@@ -207,7 +223,15 @@ if ($LASTEXITCODE -ne 0) {
         Write-Warning "The sync itself SUCCEEDED locally, but the push failed (server unreachable?):`n$($push -join "`n")"
         Write-Warning "Push manually once the server is reachable: git -C `"$repo`" push origin $($branches -join ' ')"
     }
+    Write-Warning "The bundle folder stays in toUpload\$($bundleFolder.Name) - it moves to doneUpload\ only after a successful push (re-run landing once the push issue is resolved)."
 } else {
     Write-Host "Pushed."
+    # Only now is the bundle fully landed - move its folder to doneUpload\ as the record.
+    if (-not (Test-Path $doneUpload)) { New-Item -ItemType Directory -Path $doneUpload | Out-Null }
+    $dest = Join-Path $doneUpload $bundleFolder.Name
+    $n = 1
+    while (Test-Path $dest) { $n++; $dest = Join-Path $doneUpload ('{0}-{1}' -f $bundleFolder.Name, $n) }
+    Move-Item $bundleFolder.FullName $dest
+    Write-Host "Moved toUpload\$($bundleFolder.Name) -> doneUpload\$(Split-Path -Leaf $dest)."
     if ($firstRun) { Write-Host "Remember: enable BRANCH PROTECTION on develop/staging/main on the server." }
 }

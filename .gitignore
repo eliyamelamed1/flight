@@ -6,7 +6,8 @@ config.json
 
 # Per-kit runtime assets created beside the scripts by takeoff/landing — never commit
 repo/
-transfer/
+toUpload/
+doneUpload/
 *.bundle
 
 # The REAL dictionary holds internal-specific values and must never reach the toolkit

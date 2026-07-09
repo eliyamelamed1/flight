@@ -2,20 +2,24 @@
 .SYNOPSIS
     TAKEOFF (external side, internet). The everyday one-command export: reads the
     GitHub repo URL from repos.json (prompting if unset), keeps .\repo as a bare relay
-    clone of it, and writes a full bundle to .\transfer\app.bundle. Carry that file
-    across the air gap and run landing there.
+    clone of it, and writes a full bundle into a per-run folder
+    .\toUpload\<repo>-<timestamp>\app.bundle. Carry that folder across the air gap
+    into the internal kit's toUpload\ and run landing there.
 
 .DESCRIPTION
     This script lives in engine\; the kit root is one level up (the folder holding
     takeoff.cmd). Folder convention - everything lives in the kit root:
         repo\                 bare relay clone of the URL (created on first run)
-        transfer\app.bundle   the produced bundle (the only thing you carry across)
+        toUpload\<name>\      one folder per takeoff run (<repo>-<yyyy-MM-dd_HH-mm-ss>)
+                              holding app.bundle - the thing you carry across; landing
+                              moves it to its doneUpload\ once the push succeeded
         repos.json            per-kit remote URLs - copy repos.sample.json and fill
-                              the "external" key (leave "internal" empty on this side)
+                              the "externalRepoUrl" key (leave "internalRepoUrl" empty
+                              on this side)
 
     The repo URL resolves in this order: -RepoUrl parameter, then repos.json key
-    "external", then an interactive prompt. The URL becomes origin, so the bundle
-    always reflects exactly that repo.
+    "externalRepoUrl", then an interactive prompt. The URL becomes origin, so the
+    bundle always reflects exactly that repo.
 
     The relay clone is bare with a heads-mirroring fetch refspec, so every run's
     refresh updates branch tips in place - the bundle is always as fresh as the server.
@@ -38,11 +42,12 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw "git was not found on PATH. Install Git for Windows (https://git-scm.com/download/win), reopen this terminal, and re-run."
 }
 
-# This script lives in engine\ - the kit root (repo\, transfer\, repos.json) is one level up.
+# This script lives in engine\ - the kit root (repo\, toUpload\, repos.json) is one level up.
 $here      = Split-Path -Parent $PSScriptRoot
 $repo      = Join-Path $here 'repo'
-$bundle    = Join-Path $here 'transfer\app.bundle'
 $reposFile = Join-Path $here 'repos.json'
+# The bundle path ($bundle) is derived AFTER the URL is known - its folder is named
+# after the repo: toUpload\<repo>-<timestamp>\app.bundle.
 
 function Invoke-Git {
     $out = git @args 2>&1
@@ -56,8 +61,8 @@ if (-not $RepoUrl -and (Test-Path $reposFile)) {
     $cfg = $null
     try   { $cfg = Get-Content $reposFile -Raw | ConvertFrom-Json }
     catch { Write-Warning "repos.json is not valid JSON - ignoring it and prompting instead." }
-    if ($cfg -and "$($cfg.external)".Trim()) {
-        $RepoUrl = "$($cfg.external)".Trim()
+    if ($cfg -and "$($cfg.externalRepoUrl)".Trim()) {
+        $RepoUrl = "$($cfg.externalRepoUrl)".Trim()
         Write-Host "Using external repo URL from repos.json: $RepoUrl"
     }
 }
@@ -67,9 +72,16 @@ while (-not $RepoUrl) {
     # try/catch: under a non-interactive host Read-Host raises a NON-terminating error,
     # which would spin this loop forever - fail cleanly instead.
     try { $RepoUrl = (Read-Host 'GitHub repo URL (e.g. https://github.com/org/app.git)').Trim(); $prompted = $true }
-    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""external"" key in repos.json." }
+    catch { throw "Cannot prompt for input (non-interactive host) and no -RepoUrl was given. Re-run with -RepoUrl <url> or fill the ""externalRepoUrl"" key in repos.json." }
 }
-if ($prompted) { Write-Host "Tip: put this URL in repos.json (""external"" key, copy repos.sample.json) to skip this prompt." }
+if ($prompted) { Write-Host "Tip: put this URL in repos.json (""externalRepoUrl"" key, copy repos.sample.json) to skip this prompt." }
+
+# Per-run bundle folder, named after the repo: toUpload\<repo>-<yyyy-MM-dd_HH-mm-ss>\.
+# GetFileName handles URLs, scp-style remotes and local paths alike.
+$repoName = [System.IO.Path]::GetFileName($RepoUrl.TrimEnd('/', '\')) -replace '\.git$', ''
+if (-not $repoName) { $repoName = 'repo' }
+$runName = '{0}-{1}' -f $repoName, (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')
+$bundle  = Join-Path $here ('toUpload\{0}\app.bundle' -f $runName)
 
 # A repo either has a .git dir (working clone) or is bare (HEAD + objects at top level).
 $isRepo = (Test-Path (Join-Path $repo '.git')) -or
@@ -112,5 +124,5 @@ if ($isRepo) {
 & (Join-Path $PSScriptRoot 'export-bundle.ps1') -RepoPath $repo -Out $bundle -Refresh
 
 Write-Host ""
-Write-Host "Takeoff complete. Carry transfer\app.bundle to the internal kit's transfer\ folder"
-Write-Host "and run landing there."
+Write-Host "Takeoff complete. Carry the toUpload\$runName folder to the internal kit's"
+Write-Host "toUpload\ folder and run landing there (it moves to doneUpload\ once landed)."

@@ -580,9 +580,12 @@ the new landing; recreate `dictionary.json` from the sample and it re-versions o
 
 ## ADR-0019 — Launchers-only kit top level; per-kit remote URLs in a gitignored `repos.json`
 
-**Status:** Accepted. Partially supersedes ADR-0016: the per-run URL prompt becomes a
-fallback behind a config file, and the wrapper `.ps1` files move out of the kit top level.
-Sync semantics (ADR-0012/0013) and the dictionary storage model (ADR-0017/0018) unchanged.
+**Status:** Accepted; **amended by ADR-0020** (the `repos.json` keys are renamed to
+`externalRepoUrl`/`internalRepoUrl`, and the `transfer\` bundle drop is replaced by
+`toUpload\`/`doneUpload\` run folders). Partially supersedes ADR-0016: the per-run URL
+prompt becomes a fallback behind a config file, and the wrapper `.ps1` files move out of
+the kit top level. Sync semantics (ADR-0012/0013) and the dictionary storage model
+(ADR-0017/0018) unchanged.
 
 **Context:** The kit top level had grown to four executables (`takeoff.ps1`/`.cmd`,
 `landing.ps1`/`.cmd`) plus the engine folder, and both commands prompted for their URL on
@@ -626,3 +629,52 @@ which predated stable URLs).
 
 **Migration note:** a deployed kit refreshed by copy-over keeps its old top-level
 `takeoff.ps1`/`landing.ps1` (stale but runnable) — delete them; the kit README says so.
+
+---
+
+## ADR-0020 — Bundle handoff via per-run `toUpload\`/`doneUpload\` folders; explicit `repos.json` key names
+
+**Status:** Accepted. Amends ADR-0019 (key names) and replaces the single
+`transfer\app.bundle` drop point of ADR-0016 with per-run folders. Sync semantics
+(ADR-0012/0013) unchanged.
+
+**Context:** With one fixed `transfer\app.bundle` path, every takeoff silently overwrote
+the previous bundle and nothing recorded which bundles had already been landed — the
+operator wants pending vs done to be visible in the filesystem, with each bundle tagged
+by repo and time. The `repos.json` keys `"external"`/`"internal"` also read ambiguously
+(external *what*?).
+
+**Decision:**
+- **Takeoff** writes each bundle into a fresh folder
+  `toUpload\<repo>-<yyyy-MM-dd_HH-mm-ss>\app.bundle`, where `<repo>` is the URL's last
+  path segment minus `.git`. Nothing is overwritten; the folder is what the operator
+  carries into the internal kit's `toUpload\`.
+- **Landing** consumes exactly **one** pending folder per run (a `toUpload\*` directory
+  containing `app.bundle`) and **refuses when several are pending**, listing them — the
+  operator decides the order (land oldest first) instead of the script guessing; the
+  stale-bundle guard (ADR-0016) still rejects out-of-order content as a second line of
+  defense. No pending folder → clear error.
+- The folder moves `toUpload\<name>` → `doneUpload\<name>` **only after the push to the
+  internal server succeeded** (a name collision gets a `-2`, `-3`... suffix). A failed
+  push leaves it in `toUpload\` with a warning, so re-running landing after fixing the
+  server retries the same bundle. `toUpload\` = still to land; `doneUpload\` = landed
+  history. Both are gitignored runtime assets (replacing `transfer/`).
+- `repos.json` keys renamed for clarity: `"external"` → `"externalRepoUrl"`,
+  `"internal"` → `"internalRepoUrl"` (resolution order and fallbacks per ADR-0019
+  unchanged).
+
+**Alternatives considered:**
+- Move to `doneUpload\` on takeoff (external side) when the bundle is written — rejected:
+  "done" would mean "created", not "landed"; the external machine can never know the
+  upload/landing outcome. Landing's successful push is the only knowable completion point.
+- Landing processes all pending folders oldest-first as a queue — rejected: multiple
+  pending bundles almost always means something went wrong (a landing was skipped);
+  refusing makes the operator look, and full bundles make intermediate ones redundant
+  anyway.
+- Keep a fixed `transfer\app.bundle` path — rejected: silent overwrites and no
+  pending/done state; the whole point of this change.
+
+**Migration note:** deployed kits' existing `transfer\` folders are simply no longer
+read — takeoff creates `toUpload\` on its next run and landing tells you exactly where
+it expects the folder. Old `repos.json` files with `"external"`/`"internal"` keys read as
+empty (the commands fall back to the prompt); rename the keys.

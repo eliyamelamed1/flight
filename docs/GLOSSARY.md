@@ -6,20 +6,28 @@
   sit at the top (ADR-0019): `takeoff.cmd` / `landing.cmd`, `repos.json` (from
   `repos.sample.json`), and on the internal side `dictionary.json` (from
   `dictionary.sample.json`, ADR-0016/0017). Runtime assets sit beside them by convention
-  (`repo\` = the git repo, `transfer\` = the bundle); all the PowerShell lives in `engine\`.
+  (`repo\` = the git repo, `toUpload\` / `doneUpload\` = the bundle handoff, ADR-0020);
+  all the PowerShell lives in `engine\`.
 - **`airgap-config`** — Orphan branch on the internal server where landing automatically
   versions `dictionary.json` each run; the restore source when a kit loses its dictionary
   (ADR-0017).
 - **Takeoff** — The external-side everyday command (`takeoff.cmd` → `engine\takeoff.ps1`):
   reads the GitHub repo URL from `repos.json` (prompting if unset), refreshes the kit's
-  `repo\` (a bare relay clone), and writes `transfer\app.bundle` for carrying across the gap.
+  `repo\` (a bare relay clone), and writes the bundle into a per-run folder
+  `toUpload\<repo>-<timestamp>\app.bundle` for carrying across the gap.
 - **Landing** — The internal-side everyday command (`landing.cmd` → `engine\landing.ps1`):
-  reads the internal server URL from `repos.json` (prompting if unset), consumes
-  `transfer\app.bundle` (first run bootstraps, later runs advance `pre-dev`), and pushes
-  the result to that URL.
-- **`repos.json`** — Per-kit remote URLs (`"external"` for takeoff, `"internal"` for
-  landing); created once from the committed `repos.sample.json` and gitignored. An empty
-  or missing key falls back to a prompt; `-RepoUrl` overrides both (ADR-0019).
+  reads the internal server URL from `repos.json` (prompting if unset), consumes the one
+  pending bundle folder in `toUpload\` (first run bootstraps, later runs advance
+  `pre-dev`), pushes the result to that URL, and then moves the folder to `doneUpload\`.
+- **`repos.json`** — Per-kit remote URLs (`"externalRepoUrl"` for takeoff,
+  `"internalRepoUrl"` for landing); created once from the committed `repos.sample.json`
+  and gitignored. An empty or missing key falls back to a prompt; `-RepoUrl` overrides
+  both (ADR-0019/0020).
+- **`toUpload\` / `doneUpload\`** — The bundle handoff (ADR-0020): takeoff writes each
+  bundle into a fresh `toUpload\<repo>-<timestamp>\` folder; the operator carries that
+  folder into the internal kit's `toUpload\`; landing processes exactly one pending folder
+  per run and moves it to `doneUpload\` only after a successful push — pending vs landed
+  is visible at a glance.
 - **External repo** — The internet-side repository. Absolute source of truth for
   application code.
 - **Internal repo** — The air-gapped repository. Holds application code plus internal-only

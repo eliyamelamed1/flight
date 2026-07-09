@@ -14,7 +14,8 @@ kit\
 ├─ repos.sample.json             template for your repo URLs — copy to repos.json
 ├─ dictionary.sample.json        template for your find/replace pairs (internal only)
 ├─ repo\                         the git repo (the commands create it — don't make it yourself)
-├─ transfer\app.bundle           the file you carry across the air gap
+├─ toUpload\<name>\app.bundle    one folder per takeoff run — the thing you carry across
+├─ doneUpload\<name>\            where landing moves a folder once it landed successfully
 └─ engine\                       all the PowerShell (including takeoff.ps1/landing.ps1) — you never run these directly
 ```
 
@@ -28,8 +29,9 @@ kit\
 1. Double-click `takeoff.cmd` (or run `.\engine\takeoff.ps1` from a PowerShell window).
 2. It reads the **GitHub repo URL** from `repos.json` (see below) — or asks for it if
    you haven't set that up.
-3. It writes `transfer\app.bundle`. Copy that one file to the internal machine, into the
-   internal kit's `transfer\` folder.
+3. It writes the bundle into a new folder named after the repo and the moment it ran:
+   `toUpload\<repo>-<date>_<time>\app.bundle` (e.g. `toUpload\app-2026-07-09_14-30-05\`).
+   Copy that **whole folder** to the internal machine, into the internal kit's `toUpload\`.
 
 ## On the INTERNAL (air-gapped) machine
 
@@ -40,7 +42,11 @@ kit\
 3. It reads your **internal git server URL** from `repos.json` — or asks for it if you
    haven't set that up.
 4. Done. The first real run sets everything up and pushes `pre-dev/develop/staging/main`;
-   every later run just brings in the latest code and pushes `pre-dev`.
+   every later run just brings in the latest code and pushes `pre-dev`. After a
+   successful push, the bundle folder moves from `toUpload\` to `doneUpload\` — so
+   `toUpload\` is always "still to land" and `doneUpload\` is your history of what landed.
+   (Landing takes exactly one pending folder per run; if several piled up it stops and
+   asks you to keep just the one to land.)
 
 Then promote `pre-dev → develop → staging → main` with your normal PR/CI process.
 
@@ -50,14 +56,14 @@ Copy `repos.sample.json` → `repos.json` (same folder) and fill in **only your 
 
 ```json
 {
-  "external": "https://github.com/org/app.git",
-  "internal": ""
+  "externalRepoUrl": "https://github.com/org/app.git",
+  "internalRepoUrl": ""
 }
 ```
 
-- Takeoff uses `"external"`, landing uses `"internal"`. An empty or missing key just means
-  that command asks you for the URL, like before. `-RepoUrl <url>` on the command line
-  always wins.
+- Takeoff uses `"externalRepoUrl"`, landing uses `"internalRepoUrl"`. An empty or missing
+  key just means that command asks you for the URL, like before. `-RepoUrl <url>` on the
+  command line always wins.
 - `repos.json` is yours and is never committed. **Don't fill the internal URL on the
   external kit** — internal server names shouldn't travel to the internet side.
 
@@ -88,15 +94,19 @@ landing:
 The commands fail with a message that says what to do. The most common ones:
 
 - **"git was not found on PATH"** — install Git for Windows, reopen the terminal, re-run.
-- **"No bundle"** — copy `app.bundle` from the takeoff kit into `transfer\` first.
+- **"No bundle folder in toUpload"** — copy the `toUpload\<name>` folder produced by
+  takeoff into this kit's `toUpload\` first.
+- **"toUpload holds N bundle folders"** — landing takes exactly one per run; move the
+  extras out of `toUpload\` (land them one at a time, oldest first).
 - **"Stale bundle"** — you carried an old bundle; run takeoff again for a fresh one.
 - **"Server already has pre-dev"** — this is a fresh kit but your server was already set up;
   the message shows the two commands to reconnect instead of starting over.
 
 > **Updating an existing kit copy:** older kits had `takeoff.ps1` / `landing.ps1` at the top
-> level. If you refresh a deployed kit by copying this folder over it, **delete those two
-> old top-level files** — they still run but are outdated (the current ones live in
-> `engine\`). Your `dictionary.json`, `repos.json`, `repo\` and `transfer\` are untouched
-> by a copy-over.
+> level and used a `transfer\` folder for the bundle. If you refresh a deployed kit by
+> copying this folder over it, **delete those two old top-level files** — they still run
+> but are outdated (the current ones live in `engine\`) — and retire `transfer\` (bundles
+> now live in per-run `toUpload\` folders). Your `dictionary.json`, `repos.json` and
+> `repo\` are untouched by a copy-over.
 
 Full operating guide (steady-state, hotfix, reconcile): `docs/RUNBOOK.md` in the toolkit repo.

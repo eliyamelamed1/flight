@@ -15,18 +15,22 @@ external main --(git bundle across the air gap)--> internal
 ## The everyday flow: two commands
 
 Copy `scripts/` to each side — that folder is your **kit**. Everything the commands need
-lives beside them by convention (`repo\` = the git repo, `transfer\` = the bundle):
+lives beside them by convention (`repo\` = the git repo, `toUpload\` = pending bundles,
+`doneUpload\` = landed bundles):
 
 ```powershell
-.\takeoff.cmd     # EXTERNAL: reads the GitHub URL from repos.json -> refreshes repo\ -> transfer\app.bundle
-# ── carry transfer\app.bundle across the air gap into the internal kit's transfer\ ──
+.\takeoff.cmd     # EXTERNAL: reads the GitHub URL from repos.json -> refreshes repo\
+                  #           -> writes toUpload\<repo>-<timestamp>\app.bundle
+# ── carry that toUpload\<name> folder across the air gap into the internal kit's toUpload\ ──
 .\landing.cmd     # INTERNAL: reads your internal server URL from repos.json -> first run
                   #           bootstraps, later runs advance pre-dev -> pushes the branches
+                  #           -> moves the landed folder toUpload\<name> -> doneUpload\<name>
 ```
 
 No paths to remember. Each command takes its URL from `-RepoUrl`, else the kit's
-`repos.json` (copy `repos.sample.json`, fill your side's key), else prompts for it.
-The launchers are double-clickable; all the PowerShell lives in `scripts/engine/`.
+`repos.json` (copy `repos.sample.json`, fill your side's key: `externalRepoUrl` /
+`internalRepoUrl`), else prompts for it. The launchers are double-clickable; all the
+PowerShell lives in `scripts/engine/`.
 
 ## How it works (the short version)
 
@@ -46,9 +50,9 @@ The kit top level holds only what the operator touches (ADR-0019):
 
 | File | Side | Purpose |
 |--------|------|---------|
-| `takeoff.cmd` | external | Refresh `repo\` from the configured URL, write `transfer\app.bundle` |
-| `landing.cmd` | internal | Consume `transfer\app.bundle`: bootstrap-or-sync (auto-detected), push to the configured URL |
-| `repos.sample.json` | both kits | Template — copy to `repos.json`, fill your side's remote URL (gitignored; ADR-0019) |
+| `takeoff.cmd` | external | Refresh `repo\` from the configured URL, write `toUpload\<repo>-<timestamp>\app.bundle` |
+| `landing.cmd` | internal | Consume the pending `toUpload\` bundle: bootstrap-or-sync (auto-detected), push to the configured URL, then move the folder to `doneUpload\` |
+| `repos.sample.json` | both kits | Template — copy to `repos.json`, fill your side's remote URL (`externalRepoUrl`/`internalRepoUrl`; gitignored; ADR-0019/0020) |
 | `dictionary.sample.json` | internal kit | Template — copy to `dictionary.json` once, then edit the real one (gitignored; auto-backed-up to the server's `airgap-config` branch every landing, ADR-0017) |
 | `README.md` | both kits | Plain-language operator guide that travels with the kit |
 
